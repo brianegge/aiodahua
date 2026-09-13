@@ -14,6 +14,7 @@ __all__ = [
     "format_bytes",
     "is_not_supported_response",
     "parse_kv",
+    "parse_log_entries",
     "parse_media_files",
     "parse_storage_info",
 ]
@@ -201,3 +202,54 @@ def parse_media_files(text: str) -> tuple[int, list[dict]]:
             "unknown",
         )
     return found, ordered
+
+
+def parse_log_entries(text: str) -> list[dict[str, str]]:
+    """Parse a ``log.cgi?action=doFind`` response into one dict per entry.
+
+    The response interleaves indexed fields with bare continuation lines::
+
+        found=2
+        items[0].Time=2026-09-13 01:38:20
+        items[0].Detail=Event Type:IPC Offline Alarm
+        Channel:10
+        Start Time:2026-09-13 01:38:20
+        items[1].Time=...
+
+    A flat ``key=value`` parse turns those continuation lines into nonsense
+    top-level keys such as ``{"Channel:10": "Channel:10"}``, losing which entry
+    they belonged to. Here they are appended to the preceding entry's
+    ``detail`` instead, and ``detail_fields`` holds them split into pairs where
+    they look like ``Key:Value``.
+    """
+    entries: dict[int, dict[str, str]] = {}
+    order: list[int] = []
+    current: int | None = None
+
+    for raw_line in text.strip().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("found="):
+            continue
+
+        match = _ITEM_RE.match(line.split("=", 1)[0]) if "=" in line else None
+        if match:
+            index = int(match.group(1))
+            field = match.group(2)
+            value = line.split("=", 1)[1]
+            if index not in entries:
+                entries[index] = {"detail_fields": {}}
+                order.append(index)
+            current = index
+            entries[index][field[0].lower() + field[1:]] = value
+            continue
+
+        # Continuation of the previous entry's Detail.
+        if current is None:
+            continue
+        entry = entries[current]
+        entry["detail"] = (entry.get("detail", "") + "\n" + line).strip()
+        if ":" in line:
+            key, _, value = line.partition(":")
+            entry["detail_fields"][key.strip()] = value.strip()
+
+    return [entries[i] for i in order]

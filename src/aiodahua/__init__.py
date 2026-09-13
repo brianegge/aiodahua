@@ -33,13 +33,15 @@ from .exceptions import DahuaConnectionError
 from .exceptions import DahuaError
 from .exceptions import DahuaNotSupportedError
 from .exceptions import DahuaResponseError
+from .exceptions import DahuaTimeoutError
 from .exceptions import DahuaValueError
 from .parsers import format_bytes
 from .parsers import parse_kv
+from .parsers import parse_log_entries
 from .parsers import parse_media_files
 from .parsers import parse_storage_info
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "DEFAULT_PORT",
@@ -55,6 +57,7 @@ __all__ = [
     "DahuaError",
     "DahuaNotSupportedError",
     "DahuaResponseError",
+    "DahuaTimeoutError",
     "DahuaValueError",
     "__version__",
     "build_config_query",
@@ -63,6 +66,7 @@ __all__ = [
     "format_bytes",
     "identify_brand",
     "parse_kv",
+    "parse_log_entries",
     "parse_media_files",
     "parse_storage_info",
 ]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import random
 import re
@@ -25,8 +26,10 @@ from .exceptions import DahuaAuthError
 from .exceptions import DahuaConnectionError
 from .exceptions import DahuaNotSupportedError
 from .exceptions import DahuaResponseError
+from .exceptions import DahuaTimeoutError
 from .parsers import is_not_supported_response
 from .parsers import parse_kv
+from .parsers import parse_log_entries
 from .parsers import parse_media_files
 from .parsers import parse_storage_info
 
@@ -205,7 +208,15 @@ class DahuaClient:
         except (DahuaAuthError, DahuaNotSupportedError, DahuaResponseError):
             raise
         except TimeoutError as err:
-            raise DahuaConnectionError(f"Timed out talking to {self._host}") from err
+            raise DahuaTimeoutError(f"Timed out talking to {self._host}") from err
+        except aiohttp.ClientResponseError as err:
+            # Keep this a response error, not a connection error: callers probe
+            # endpoints and read the distinction as "unsupported" vs "offline".
+            raise DahuaResponseError(
+                f"HTTP {err.status} on {endpoint}",
+                status=err.status,
+                endpoint=endpoint,
+            ) from err
         except (aiohttp.ClientError, socket.gaierror) as err:
             raise DahuaConnectionError(f"Cannot reach {self._host}: {err}") from err
         finally:
@@ -237,7 +248,15 @@ class DahuaClient:
         except (DahuaAuthError, DahuaResponseError):
             raise
         except TimeoutError as err:
-            raise DahuaConnectionError(f"Timed out talking to {self._host}") from err
+            raise DahuaTimeoutError(f"Timed out talking to {self._host}") from err
+        except aiohttp.ClientResponseError as err:
+            # Keep this a response error, not a connection error: callers probe
+            # endpoints and read the distinction as "unsupported" vs "offline".
+            raise DahuaResponseError(
+                f"HTTP {err.status} on {endpoint}",
+                status=err.status,
+                endpoint=endpoint,
+            ) from err
         except (aiohttp.ClientError, socket.gaierror) as err:
             raise DahuaConnectionError(f"Cannot reach {self._host}: {err}") from err
         finally:
@@ -252,9 +271,18 @@ class DahuaClient:
     # Assistant integration call these; they are kept so that code moves across
     # unchanged and keeps returning device-literal keys.
 
-    async def get(self, url: str) -> dict[str, str]:
-        """GET a CGI endpoint, returning keys exactly as the device sent them."""
-        return await self.async_get(url)
+    async def get(self, url: str, verify_ok: bool = False) -> dict[str, str]:
+        """GET a CGI endpoint, returning keys exactly as the device sent them.
+
+        Args:
+            url: CGI path, with or without the ``/cgi-bin/`` prefix.
+            verify_ok: Require the body to be exactly ``OK``. Used by the write
+                endpoints that answer with a bare acknowledgement.
+        """
+        text = await self.async_get_text(url)
+        if verify_ok and text.strip().lower() != "ok":
+            raise DahuaResponseError(text.strip(), endpoint=url, body=text[:200])
+        return parse_kv(text)
 
     async def get_bytes(self, url: str) -> bytes:
         """GET a CGI endpoint and return raw bytes."""
@@ -331,6 +359,69 @@ class DahuaClient:
     async def async_set_channel_title(self, channel: int, title: str) -> bool:
         """Set the on-screen channel name (safe for ``#``, ``+``, ``%``)."""
         return await self.async_set_config({f"ChannelTitle[{channel}].Name": title})
+
+    async def async_get_hardware_version(self) -> str | None:
+        """Hardware revision, e.g. ``V1.0``."""
+        return await self._async_get_field(
+            "magicBox.cgi?action=getHardwareVersion", "version"
+        )
+
+    async def async_get_audio_capabilities(self) -> dict[str, str]:
+        """Audio output capabilities, e.g. supported speaker encodings.
+
+        Raises:
+            DahuaNotSupportedError: On devices with no audio output.
+        """
+        return await self.async_get("devAudioOutput.cgi?action=getCaps")
+
+    async def async_search_logs(
+        self,
+        start_time: str,
+        end_time: str,
+        log_type: str = "All",
+        count: int = 100,
+    ) -> list[dict[str, str]]:
+        """Search the device log, via the three-step ``log.cgi`` API.
+
+        Note the firmware largely ignores ``log_type``: asking for ``Storage``
+        still returns logins and alarms. It is passed through anyway for
+        devices that do honour it.
+
+        Args:
+            start_time: ``"YYYY-MM-DD HH:MM:SS"``.
+            end_time: ``"YYYY-MM-DD HH:MM:SS"``.
+            log_type: Filter, e.g. ``All``, ``Alarm``, ``System``, ``Account``.
+            count: Maximum entries to return.
+
+        Returns:
+            One dict per entry. Continuation lines of a multi-line ``Detail``
+            stay with their entry instead of becoming bogus top-level keys.
+        """
+        start = quote(start_time, safe=":-")
+        end = quote(end_time, safe=":-")
+        started = await self.async_get_text(
+            f"log.cgi?action=startFind&condition.Types=[{log_type}]"
+            f"&condition.StartTime={start}&condition.EndTime={end}"
+        )
+        token = None
+        for line in started.strip().splitlines():
+            if "token" in line.lower() and "=" in line:
+                token = line.split("=", 1)[1].strip()
+                break
+        if not token:
+            raise DahuaResponseError(
+                "Log search did not return a token",
+                endpoint="log.cgi?action=startFind",
+                body=started[:200],
+            )
+        try:
+            raw = await self.async_get_text(
+                f"log.cgi?action=doFind&token={token}&count={count}"
+            )
+            return parse_log_entries(raw)
+        finally:
+            with contextlib.suppress(Exception):
+                await self.async_get_text(f"log.cgi?action=stopFind&token={token}")
 
     # ------------------------------------------------------------------
     # Storage and recordings

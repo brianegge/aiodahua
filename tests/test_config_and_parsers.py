@@ -183,3 +183,81 @@ class TestParseMediaFiles:
     def test_empty_result(self):
         found, files = parse_media_files("found=0")
         assert (found, files) == (0, [])
+
+
+class TestExceptionCompatibility:
+    """Existing aiohttp-based handlers must keep working after migration."""
+
+    def test_connection_error_is_a_client_error(self):
+        import aiohttp
+
+        from aiodahua import DahuaConnectionError
+
+        assert issubclass(DahuaConnectionError, aiohttp.ClientError)
+
+    def test_response_error_is_a_client_response_error(self):
+        import aiohttp
+
+        from aiodahua import DahuaResponseError
+
+        assert issubclass(DahuaResponseError, aiohttp.ClientResponseError)
+        err = DahuaResponseError("boom", status=500, endpoint="x.cgi")
+        assert err.status == 500
+        assert str(err) == "boom"
+
+    def test_auth_error_carries_401_for_reauth(self):
+        from aiodahua import DahuaAuthError
+
+        assert DahuaAuthError("nope").status == 401
+
+    def test_not_supported_is_catchable_as_response_error(self):
+        import aiohttp
+
+        from aiodahua import DahuaNotSupportedError
+
+        err = DahuaNotSupportedError("missing")
+        assert isinstance(err, aiohttp.ClientResponseError)
+        assert err.status == 400
+
+
+LOG = """found=2
+items[0].Time=2026-09-13 01:38:20
+items[0].User=default
+items[0].Type=IPC Offline Alarm
+items[0].Detail=Event Type:IPC Offline Alarm
+Channel:10
+Start Time:2026-09-13 01:38:20
+items[1].Time=2026-09-13 07:33:15
+items[1].User=admin
+items[1].Type=User logged in.
+items[1].Detail=IP Address: 192.168.4.2"""
+
+
+class TestParseLogEntries:
+    def test_one_dict_per_entry(self):
+        from aiodahua import parse_log_entries
+
+        entries = parse_log_entries(LOG)
+        assert len(entries) == 2
+        assert entries[0]["type"] == "IPC Offline Alarm"
+        assert entries[1]["user"] == "admin"
+
+    def test_continuation_lines_stay_with_their_entry(self):
+        """A flat parse turns these into bogus keys like {'Channel:10': ...}."""
+        from aiodahua import parse_log_entries
+
+        first = parse_log_entries(LOG)[0]
+        assert "Channel:10" in first["detail"]
+        assert first["detail_fields"]["Channel"] == "10"
+        assert first["detail_fields"]["Start Time"] == "2026-09-13 01:38:20"
+
+    def test_continuations_do_not_leak_to_the_next_entry(self):
+        from aiodahua import parse_log_entries
+
+        second = parse_log_entries(LOG)[1]
+        assert "Channel" not in second["detail_fields"]
+
+    def test_empty(self):
+        from aiodahua import parse_log_entries
+
+        assert parse_log_entries("found=0") == []

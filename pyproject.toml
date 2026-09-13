@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aiodahua"
-version = "0.2.0"
+version = "0.3.0"
 description = "Async client for Dahua and white-label (Amcrest, Lorex, EmpireTech) IP cameras and NVRs"
 readme = "README.md"
 requires-python = ">=3.11"
