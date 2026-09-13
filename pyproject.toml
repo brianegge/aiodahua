@@ -56,6 +56,9 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]
+# A operator-facing CLI: printing is the point, and it shells out to ffmpeg
+# with a fixed argument list.
+"scripts/*" = ["T20", "S404", "S603", "S607", "E402", "BLE001"]
 # Ported verbatim from the Dahua HA integration; reformatting it would make
 # future upstream comparison painful.
 "src/aiodahua/digest.py" = ["N802", "N803", "N806", "S324", "UP031", "SIM108", "C4", "B", "S101"]

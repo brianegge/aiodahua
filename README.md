@@ -145,8 +145,21 @@ them trimmed.
 
 > The audio paths and event streaming are carried over unchanged and are
 > exercised in production by the HA integration, but this library's own live
-> testing covered identity, config, storage, recordings, snapshots and RTSP
-> against Amcrest hardware. The speaker paths need a device with a speaker.
+> testing covered identity, config, storage, recordings, snapshots, logs and
+> RTSP against Amcrest hardware. **The two speaker paths have not been run
+> against a speaker** — the devices here have microphones but no audio output.
+
+To close that gap on hardware that does have a speaker:
+
+```bash
+python scripts/verify_speaker.py 192.168.1.50 admin secret
+python scripts/verify_speaker.py 192.168.1.50 admin secret --path backchannel
+```
+
+It reports the brand, whether audio encoding is on, and exercises
+`audio.cgi` and the RTSP backchannel in turn. **It makes audible noise.**
+Note that neither transport reports whether the speaker actually sounded —
+the camera accepts the stream either way — so judge by ear, not exit code.
 
 ## Credits
 
