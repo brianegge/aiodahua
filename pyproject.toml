@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aiodahua"
+version = "0.1.0"
+description = "Async client for Dahua and white-label (Amcrest, Lorex, EmpireTech) IP cameras and NVRs"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+authors = [{name = "Brian Egge", email = "brianegge@gmail.com"}]
+keywords = ["dahua", "amcrest", "lorex", "empiretech", "ip-camera", "nvr", "asyncio", "homeassistant"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Home Automation",
+    "Topic :: Multimedia :: Video",
+    "Topic :: System :: Networking",
+]
+
+dependencies = [
+    "aiohttp>=3.9",
+    "yarl>=1.9",
+]
+
+[project.urls]
+Homepage = "https://github.com/brianegge/aiodahua"
+Issues = "https://github.com/brianegge/aiodahua/issues"
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "aioresponses",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aiodahua"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP", "N", "S", "T20", "SIM", "LOG", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+# Ported verbatim from the Dahua HA integration; reformatting it would make
+# future upstream comparison painful.
+"src/aiodahua/digest.py" = ["N802", "N803", "N806", "S324", "UP031", "SIM108", "C4", "B", "S101"]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
