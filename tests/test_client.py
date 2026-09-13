@@ -173,3 +173,14 @@ class TestSessionOwnership:
         client = DahuaClient("h", "u", "p", session=session)
         await client.async_close()
         assert session.closed is False, "must not close a caller-owned session"
+
+
+class TestHostNormalisation:
+    def test_trailing_slash_stripped(self):
+        """Otherwise the base URL comes out as http://host/:80."""
+        client = DahuaClient("192.168.1.1/", "u", "p")
+        assert client._host == "192.168.1.1"
+        assert client._base == "http://192.168.1.1:80"
+
+    def test_https_when_port_443(self):
+        assert DahuaClient("h", "u", "p", port=443)._base == "https://h:443"

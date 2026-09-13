@@ -97,6 +97,8 @@ class DahuaClient:
         timeout: int = DEFAULT_TIMEOUT,
         tls: bool = False,
     ) -> None:
+        # Trailing slashes would produce URLs like http://host/:80
+        host = host.rstrip("/")
         self._host = host
         self._username = username
         self._password = password
