@@ -60,10 +60,19 @@ class TestBuildConfigQuery:
 
 
 class TestParseKv:
-    def test_strips_table_prefix(self):
+    def test_keys_are_device_literal_by_default(self):
+        """Renaming keys would break callers that index the raw response."""
         assert parse_kv("table.General.MachineName=CHNVR") == {
+            "table.General.MachineName": "CHNVR"
+        }
+
+    def test_prefix_stripping_is_opt_in(self):
+        assert parse_kv("table.General.MachineName=CHNVR", strip_prefix=True) == {
             "General.MachineName": "CHNVR"
         }
+
+    def test_strips_status_prefix_when_asked(self):
+        assert parse_kv("status.x=1", strip_prefix=True) == {"x": "1"}
 
     def test_keeps_value_containing_equals(self):
         assert parse_kv("a=b=c") == {"a": "b=c"}

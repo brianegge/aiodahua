@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aiodahua"
-version = "0.1.0"
+version = "0.2.0"
 description = "Async client for Dahua and white-label (Amcrest, Lorex, EmpireTech) IP cameras and NVRs"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -59,6 +59,12 @@ ignore = ["E501"]
 # Ported verbatim from the Dahua HA integration; reformatting it would make
 # future upstream comparison painful.
 "src/aiodahua/digest.py" = ["N802", "N803", "N806", "S324", "UP031", "SIM108", "C4", "B", "S101"]
+# client.py carries ~64 methods over from the Dahua HA integration verbatim, so
+# that adopting this library is not tangled up with a stylistic rewrite. The
+# suppressed rules are cosmetic (str.format vs f-string) or false positives:
+# md5 builds a stable device id, never a security digest, and random generates
+# RTSP CSeq/SSRC values, not secrets.
+"src/aiodahua/client.py" = ["UP030", "UP032", "S324", "S311", "SIM108", "RUF002", "SIM105", "S110"]
 
 [tool.ruff.lint.isort]
 force-single-line = true

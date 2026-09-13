@@ -121,17 +121,32 @@ a lot — an NV4116-HS on 2020 firmware has no `getSmartInfo` and no
 The client does not close a session you pass in, so it is safe to hand it Home
 Assistant's shared `aiohttp` session.
 
-## Not here yet
+## Full device API
 
-Deliberately out of v0.1, so nothing ships untested:
+v0.2.0 carries across the complete client from the Dahua Home Assistant
+integration — 89 methods in total — so the integration can adopt this library
+without a behavioural diff. That includes the parts that were the hardest to
+get right:
 
-- **Speaker audio out** (`audio.cgi` multipart with ADTS framing, and the RTSP
-  ONVIF backchannel fallback for firmware that resets `audio.cgi` — notably
-  Lorex). A working implementation lives in the
-  [Dahua HA integration](https://github.com/rroller/dahua); it needs a device
-  with a speaker to port safely.
-- **Event streaming** (`eventManager.cgi` long-poll).
-- **PTZ, lighting, motion-detection config.**
+- **Speaker audio out** — `async_post_audio()` (multipart MIME with per-frame
+  ADTS delivery, digest priming, explicit `Content-Length` because many cameras
+  reject chunked encoding) and `async_post_audio_backchannel()` (RTSP ONVIF
+  backchannel over TCP-interleaved RTP, for firmware that resets `audio.cgi` —
+  notably Lorex).
+- **Event streaming** — `stream_events()` long-poll.
+- **PTZ**, lighting v1/v2, floodlight and siren, IVS rules, privacy masking,
+  day/night switching, video overlays, coaxial control, disarming linkage,
+  record mode, door open.
+
+Keys are returned **exactly as the device sends them**, including the `table.`
+prefix on `configManager` reads. Renaming them would quietly break callers that
+index the literal response; pass `strip_prefix=True` to `parse_kv` if you want
+them trimmed.
+
+> The audio paths and event streaming are carried over unchanged and are
+> exercised in production by the HA integration, but this library's own live
+> testing covered identity, config, storage, recordings, snapshots and RTSP
+> against Amcrest hardware. The speaker paths need a device with a speaker.
 
 ## Credits
 

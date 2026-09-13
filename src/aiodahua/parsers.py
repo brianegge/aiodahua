@@ -37,11 +37,17 @@ def is_not_supported_response(text: str) -> bool:
     return stripped.startswith("error") and "bad request" in stripped
 
 
-def parse_kv(text: str) -> dict[str, str]:
+def parse_kv(text: str, strip_prefix: bool = False) -> dict[str, str]:
     """Parse ``key=value`` response text into a flat dict.
 
-    Strips the ``table.`` and ``status.`` prefixes Dahua puts on config reads.
-    Lines without ``=`` are kept under their own text so nothing is lost.
+    Keys are returned exactly as the device sent them. ``configManager.cgi``
+    prefixes config reads with ``table.``, and that prefix is *kept* by default:
+    silently renaming keys would break callers that index the literal response,
+    and it makes round-tripping a value back through setConfig error-prone.
+
+    Args:
+        text: The raw response body.
+        strip_prefix: Drop a leading ``table.`` or ``status.`` from each key.
     """
     result: dict[str, str] = {}
     for raw_line in text.strip().splitlines():
@@ -50,10 +56,11 @@ def parse_kv(text: str) -> dict[str, str]:
             continue
         if "=" in line:
             key, value = line.split("=", 1)
-            for prefix in ("table.", "status."):
-                if key.startswith(prefix):
-                    key = key[len(prefix) :]
-                    break
+            if strip_prefix:
+                for prefix in ("table.", "status."):
+                    if key.startswith(prefix):
+                        key = key[len(prefix) :]
+                        break
             result[key] = value
         else:
             result[line] = line
