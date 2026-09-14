@@ -57,9 +57,9 @@ is not always the same story — this hardware gets cross-flashed constantly:
 match = identify_brand(
     vendor="Dahua", version="4.001.0000005.1", serial="AMR013C3556656F6E1"
 )
-match.brand            # Brand.DAHUA -- generic Dahua firmware
-match.hardware_brand   # Brand.AMCREST -- an NV4108E-HS underneath
-match.is_cross_flashed # True
+match.brand  # Brand.DAHUA -- generic Dahua firmware
+match.hardware_brand  # Brand.AMCREST -- an NV4108E-HS underneath
+match.is_cross_flashed  # True
 ```
 
 That is a real device: an Amcrest recorder reflashed with Dahua firmware. It
