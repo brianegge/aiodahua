@@ -43,16 +43,29 @@ Dahua devices don't advertise their brand consistently — Amcrest *recorders*
 answer `AC` to `getVendor` while Amcrest *cameras* answer `Amcrest`. So three
 independent signals are combined:
 
-| Signal | Weight | Example | Notes |
+| Signal | Group | Example | Notes |
 |---|---|---|---|
-| Serial prefix | 3 | `AMC…`, `AMR…`, `ND…` | Amcrest cameras / recorders, Lorex |
-| Firmware OEM code | 2 | `4.000.00**AC**000.0` | The two letters after `00`; absent on some builds |
-| `getVendor` | 1 | `AC`, `Amcrest`, `Dahua`, `Lorex`, `General` | Inconsistent even within a brand |
+| Firmware OEM code | firmware | `4.000.00**AC**000.0` | The two letters after `00`; absent on generic builds |
+| `getVendor` | firmware | `AC`, `Amcrest`, `Dahua`, `Lorex`, `General` | Weaker: often left at the factory default |
+| Serial prefix | hardware | `AMC…`, `AMR…`, `ND…` | Amcrest cameras / recorders, Lorex. Survives a reflash |
 
-The weights matter. An Amcrest NV4108E-HS answers `getVendor=Dahua` — not
-`AC`, as its NV4116-HS sibling does — and its version `4.001.0000005.1` has no
-OEM code at all, so its `AMR` serial is the only signal that says anything
-about the brand. Unweighted voting called that device a Dahua.
+`brand` reports the **firmware**, because the firmware is what decides which
+endpoints exist and how they misbehave. The serial identifies the metal, which
+is not always the same story — this hardware gets cross-flashed constantly:
+
+```python
+match = identify_brand(
+    vendor="Dahua", version="4.001.0000005.1", serial="AMR013C3556656F6E1"
+)
+match.brand            # Brand.DAHUA -- generic Dahua firmware
+match.hardware_brand   # Brand.AMCREST -- an NV4108E-HS underneath
+match.is_cross_flashed # True
+```
+
+That is a real device: an Amcrest recorder reflashed with Dahua firmware. It
+answers `getVendor=Dahua`, carries no OEM code, and talks to Dahua's own
+easy4ip P2P service, while its `AMR` serial and `NV4108E-HS` model name are
+pure Amcrest. Where the firmware gives nothing away at all, the serial decides.
 
 ```python
 from aiodahua import identify_brand

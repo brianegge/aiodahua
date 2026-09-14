@@ -79,6 +79,9 @@ class Interview:
             "model": await client.async_get_device_type(),
             "brand": brand.brand.value,
             "brand_signals": ", ".join(brand.matched_on) or "none",
+            "firmware_brand": brand.firmware_brand.value,
+            "hardware_brand": brand.hardware_brand.value,
+            "cross_flashed": str(brand.is_cross_flashed),
             "vendor": brand.raw_vendor,
             "firmware": await client.async_get_software_version(),
             "hardware": await client.async_get_hardware_version(),
@@ -254,10 +257,15 @@ def markdown_row(report: dict) -> str:
         )
 
     codecs = caps.get("video_codecs", {}).get("detail", "") or "?"
+    brand = identity.get("brand")
+    if identity.get("cross_flashed") == "True":
+        # Worth saying out loud: the row describes firmware behaviour on
+        # hardware sold under a different name.
+        brand = f"{brand} ({identity.get('hardware_brand')} hardware)"
     snmp = "yes" if caps.get("snmp", {}).get("supported") == SUPPORTED else mark("snmp")
     return "| {model} | {brand} | {firmware} | {codecs} | {streams} | {snmp} | {storage} | {rec} | {ptz} | {lens} | {coax} | {smd} | {ivs} | {spk} | {audio} |".format(
         model=identity.get("model"),
-        brand=identity.get("brand"),
+        brand=brand,
         firmware=(identity.get("firmware") or "").split(",")[0],
         codecs=codecs,
         streams=caps.get("extra_streams", {}).get("detail", "?"),
