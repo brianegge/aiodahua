@@ -14,6 +14,7 @@ requires, so it cannot mock anything at all on a current aiohttp.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 import pytest
 
@@ -296,6 +297,33 @@ class TestAudioProbeGuard:
         )
         client._brand = identify_brand(vendor="Amcrest")
         assert await client.async_get_audio_input(1) is False
+
+    async def test_post_audio_is_refused_on_lorex(self):
+        """The speaker path uses the same endpoint that reboots the camera.
+
+        Only the GET has been observed rebooting an E891AB -- there is no Lorex
+        speaker here to test the POST against -- so this guard is by inference.
+        It is the safe direction to be wrong in: the backchannel is the path
+        this brand's profile prefers anyway.
+        """
+        client, session = make_client([])
+        client._brand = identify_brand(vendor="LOREX")
+        with pytest.raises(DahuaUnsafeOperationError):
+            await client.async_post_audio(b"audio", 1)
+        assert session.calls == []
+
+    async def test_post_audio_allowed_on_other_brands(self):
+        # It primes digest on a cheap GET before POSTing the stream.
+        client, session = make_client(
+            [
+                ("getMachineName", FakeResponse(200, "name=cam")),
+                (AUDIO, FakeResponse(200, "")),
+            ]
+        )
+        client._brand = identify_brand(vendor="Amcrest")
+        with contextlib.suppress(Exception):
+            await client.async_post_audio(b"audio", 1)
+        assert session.count(AUDIO) >= 1
 
     async def test_channel_zero_is_rejected_before_sending(self):
         """audio.cgi is 1-based, and channel 0 triggers a stale=TRUE loop.

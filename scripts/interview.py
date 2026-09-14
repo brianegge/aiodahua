@@ -303,7 +303,8 @@ async def main() -> int:
     parser.add_argument(
         "--force-audio",
         action="store_true",
-        help="probe audio.cgi even on brands whose firmware reboots on it",
+        help="probe audio.cgi even on brands whose firmware reboots on it "
+        "(a Lorex E891AB drops HTTP and RTSP for ~105s)",
     )
     args = parser.parse_args()
 

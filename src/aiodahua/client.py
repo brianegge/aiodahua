@@ -1553,6 +1553,7 @@ class DahuaClient:
         channel: int,
         encoding: str = "G.711A",
         duration: float = 0,
+        force: bool = False,
     ) -> None:
         """POST audio to the camera speaker via multipart MIME streaming.
 
@@ -1563,7 +1564,30 @@ class DahuaClient:
         fed without overrun.
 
         For non-AAC encodings, falls back to a single MIME part.
+
+        Args:
+            force: Send even to a brand whose profile says audio.cgi reboots
+                it. See :class:`DahuaUnsafeOperationError`.
+
+        Raises:
+            DahuaUnsafeOperationError: The brand reboots on audio.cgi and
+                ``force`` is False. Prefer
+                :meth:`async_post_audio_backchannel`.
         """
+        if not force:
+            # Same endpoint that reboots a Lorex E891AB on a plain GET. Only
+            # the GET has been observed doing it -- no Lorex here has a speaker
+            # to test the POST against -- but a device that crashes on the
+            # cheap request is not one to hand a stream of audio to on a guess.
+            brand = self._brand or await self.async_identify()
+            if brand.profile.audio_cgi_reboots:
+                raise DahuaUnsafeOperationError(
+                    f"{self._host} is a {brand.profile.display_name} device, "
+                    f"whose firmware reboots when audio.cgi is requested. Not "
+                    f"sending it. Use async_post_audio_backchannel(), which "
+                    f"this brand prefers anyway, or pass force=True."
+                )
+
         boundary = _MULTIPART_BOUNDARY
         url = (
             "{0}/cgi-bin/audio.cgi?action=postAudio&httptype=multipart&channel={1}"
