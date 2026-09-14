@@ -1,0 +1,104 @@
+name: Release
+
+# Publishes to PyPI via trusted publishing (OIDC), so no API token is stored
+# anywhere. See RELEASING.md for the one-time PyPI configuration this needs.
+#
+# Trigger by publishing a GitHub Release whose tag is v<version>, matching the
+# version in pyproject.toml. The tag and the packaged version are compared
+# before anything is uploaded, because a PyPI version can never be reused.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Where to publish
+        required: true
+        default: testpypi
+        type: choice
+        options: [testpypi, pypi]
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Check the tag matches the packaged version
+        if: github.event_name == 'release'
+        run: |
+          version=$(uv run python -c "
+          import tomllib
+          print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])
+          ")
+          tag="${GITHUB_REF_NAME#v}"
+          echo "tag=$tag pyproject=$version"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match pyproject version $version." \
+                 "A PyPI version cannot be reused, so this stops before uploading."
+            exit 1
+          fi
+
+      - name: Check this version is not already on PyPI
+        run: |
+          version=$(uv run python -c "
+          import tomllib
+          print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])
+          ")
+          code=$(curl -s -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/aiodahua/$version/json")
+          if [ "$code" = "200" ]; then
+            echo "::error::aiodahua $version is already on PyPI. Bump the version."
+            exit 1
+          fi
+          echo "aiodahua $version is not published yet (HTTP $code)"
+
+      - name: Build
+        run: uv build
+
+      - name: Validate metadata
+        run: uvx twine check dist/*
+
+      - name: Install the wheel clean and import it
+        run: |
+          uv venv /tmp/wheeltest
+          uv pip install --python /tmp/wheeltest/bin/python dist/*.whl
+          /tmp/wheeltest/bin/python -c "
+          import aiodahua
+          from aiodahua import DahuaClient, identify_brand
+          assert str(identify_brand(vendor='AC', version='4.000.00AC000.0')) == 'Amcrest'
+          assert DahuaClient('h', 'u', 'p')._base == 'http://h:80'
+          print('ok', aiodahua.__version__)
+          "
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # The environment is where the trusted-publisher binding lives, and it is
+    # also the place to add a manual approval gate if you ever want one.
+    environment:
+      name: ${{ github.event_name == 'workflow_dispatch' && inputs.repository || 'pypi' }}
+      url: https://pypi.org/p/aiodahua
+    permissions:
+      id-token: write # the OIDC token that replaces an API token
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: >-
+            ${{ (github.event_name == 'workflow_dispatch' && inputs.repository == 'testpypi')
+                && 'https://test.pypi.org/legacy/' || '' }}
