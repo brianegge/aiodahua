@@ -10,6 +10,7 @@ afternoon each.
 
 ```python
 import asyncio
+from pathlib import Path
 from aiodahua import DahuaClient
 
 
@@ -27,9 +28,47 @@ async def main():
         )
         print(found, files[0]["record_type"])  # 1 regular
 
+        clip = await dev.async_download_clip(
+            "2026-09-13 03:42:20", "2026-09-13 03:42:50", channel=1
+        )
+        Path("clip.dav").write_bytes(clip)  # ffmpeg -i clip.dav ...
+
 
 asyncio.run(main())
 ```
+
+
+## Pulling recorded video
+
+`async_download_clip` asks the recorder to cut a time range, rather than
+fetching a whole stored segment — those run an hour per channel at roughly
+1.8 GB, while 30 seconds of 4K HEVC is about 15 MB.
+
+What it returns can be handed straight to ffmpeg, because the preamble is
+already gone. `loadfile.cgi` prefixes the stream with a run of binary that is
+not video: served as `Content-Type: application/http`, but containing no
+status line, no headers, no boundary and no ASCII at all. Its length is not
+fixed — 9733 and 12770 bytes were seen minutes apart from one NV4108E-HS — so
+it has to be located rather than assumed, which is what
+`strip_dhav_preamble` does.
+
+Leaving it in place fails quietly, which is the reason this is handled for
+you. ffmpeg probes such a file as raw `hevc` instead of `dhav`, prints
+`PPS id out of range` for every frame, reports no duration, and still writes
+images that look fine.
+
+### Channel numbers
+
+`async_find_recordings` and `async_download_clip` take a **1-based** channel,
+while the `Encode[n]` config sections are 0-based.
+
+A channel the recorder does not have, or that is disabled, is refused with
+`Error\nBad Request!` — the same response the firmware gives for an endpoint
+it lacks. Do not read one as the other: an NV4108E-HS refusing
+`mediaFileFind.cgi` on channels 6 and 7 looks like a white-label firmware
+limitation, and is really a five-camera recorder being asked about its sixth.
+`RemoteDevice` says which channels are populated; channel titles do not, and
+are frequently stale.
 
 ## Install
 

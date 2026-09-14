@@ -88,6 +88,15 @@ class DahuaNotSupportedError(DahuaResponseError):
     request, for example one with an unencoded space in a parameter. The two
     cases are indistinguishable from the response alone, so treat this as
     "the device refused this request" rather than proof the endpoint is absent.
+
+    It also answers this way for a well-formed request naming a **channel the
+    recorder does not have or that is disabled**. That one is easy to misread
+    as a firmware limitation: an NV4108E-HS asked for ``mediaFileFind.cgi`` on
+    channels 6 and 7 -- it has five cameras -- refused both, which looked like
+    the white-label build lacking the endpoint. With a channel that exists it
+    answers immediately. Check the channel against ``RemoteDevice`` before
+    concluding anything about the firmware; channel titles are not a reliable
+    guide to which channels are populated.
     """
 
     def __init__(self, message: str, *, endpoint: str | None = None) -> None:

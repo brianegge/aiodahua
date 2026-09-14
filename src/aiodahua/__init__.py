@@ -44,6 +44,7 @@ from .parsers import parse_kv
 from .parsers import parse_log_entries
 from .parsers import parse_media_files
 from .parsers import parse_storage_info
+from .parsers import strip_dhav_preamble
 
 __version__ = "0.4.1"
 
@@ -77,4 +78,5 @@ __all__ = [
     "parse_log_entries",
     "parse_media_files",
     "parse_storage_info",
+    "strip_dhav_preamble",
 ]

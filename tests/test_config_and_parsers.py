@@ -15,6 +15,7 @@ from aiodahua import format_bytes
 from aiodahua import parse_kv
 from aiodahua import parse_media_files
 from aiodahua import parse_storage_info
+from aiodahua import strip_dhav_preamble
 from aiodahua.parsers import is_not_supported_response
 
 
@@ -261,3 +262,23 @@ class TestParseLogEntries:
         from aiodahua import parse_log_entries
 
         assert parse_log_entries("found=0") == []
+
+
+class TestStripDhavPreamble:
+    """loadfile.cgi wraps the stream in binary that ffmpeg cannot skip."""
+
+    def test_returns_the_stream_from_the_first_frame_header(self):
+        assert strip_dhav_preamble(b"\x00\x01\x02DHAVrest") == b"DHAVrest"
+
+    def test_a_clip_with_no_preamble_is_unchanged(self):
+        assert strip_dhav_preamble(b"DHAVrest") == b"DHAVrest"
+
+    def test_only_the_first_header_is_found(self):
+        """Later frames must survive; the stream is a run of DHAV records."""
+        data = b"pad" + b"DHAV" + b"one" + b"DHAV" + b"two"
+        assert strip_dhav_preamble(data) == b"DHAVoneDHAVtwo"
+
+    def test_a_body_with_no_header_is_rejected(self):
+        """An error page or an empty range, not a clip."""
+        with pytest.raises(ValueError, match="not a clip"):
+            strip_dhav_preamble(b"Error\r\nBad Request!")

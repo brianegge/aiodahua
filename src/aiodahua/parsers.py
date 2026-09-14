@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 
 __all__ = [
+    "DHAV_MAGIC",
     "RECORD_TYPES",
     "format_bytes",
     "is_error_response",
@@ -18,7 +19,12 @@ __all__ = [
     "parse_log_entries",
     "parse_media_files",
     "parse_storage_info",
+    "strip_dhav_preamble",
 ]
+
+# Every frame in a recorded stream starts with this. It is also how a clip is
+# found inside what loadfile.cgi returns -- see strip_dhav_preamble.
+DHAV_MAGIC = b"DHAV"
 
 # Dahua marks each recording filename with its trigger.
 RECORD_TYPES = {"R": "regular", "M": "motion", "A": "alarm", "I": "intelligent"}
@@ -278,3 +284,33 @@ def parse_log_entries(text: str) -> list[dict[str, str]]:
             entry["detail_fields"][key.strip()] = value.strip()
 
     return [entries[i] for i in order]
+
+
+def strip_dhav_preamble(data: bytes) -> bytes:
+    """Return the DHAV stream inside a ``loadfile.cgi`` response.
+
+    The response opens with a run of binary that is not part of the video and
+    that ffmpeg cannot skip. It is served as ``Content-Type: application/http``
+    but holds no HTTP framing at all -- no status line, no headers, no
+    boundary, no ASCII of any kind -- so it cannot be parsed, only skipped.
+
+    **Its length varies between requests**: 9733 bytes and 12770 bytes were
+    seen minutes apart from the same NV4108E-HS, so it cannot be a constant.
+    Locating the first frame header is the only reliable approach.
+
+    Leaving it in place does not fail loudly, which is the trap. ffmpeg
+    probes the file, decides it is raw ``hevc`` rather than ``dhav``, emits
+    ``PPS id out of range`` for every frame and reports no duration and no
+    timestamps -- while still writing plausible-looking images. Stripped, the
+    same data demuxes as ``format_name=dhav`` with correct timing.
+
+    Raises:
+        ValueError: if no frame header is present, which means the response
+            is an error page or an empty range rather than a clip.
+    """
+    offset = data.find(DHAV_MAGIC)
+    if offset < 0:
+        raise ValueError(
+            f"no DHAV frame header in {len(data)} bytes; the response is not a clip"
+        )
+    return data[offset:]

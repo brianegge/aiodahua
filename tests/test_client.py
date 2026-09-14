@@ -7,12 +7,27 @@ import pytest
 from aiodahua import Brand
 from aiodahua import DahuaClient
 from aiodahua import DahuaNotSupportedError
+from aiodahua import DahuaResponseError
 from aiodahua import DahuaValueError
 
 
 @pytest.fixture
 def client():
     return DahuaClient("192.168.4.4", "admin", "secret")
+
+
+def stub_bytes(client, payload):
+    """Replace the binary transport with a canned body."""
+    calls = []
+
+    async def _get_bytes(endpoint):
+        calls.append(endpoint)
+        if isinstance(payload, Exception):
+            raise payload
+        return payload
+
+    client.async_get_bytes = _get_bytes
+    return calls
 
 
 def stub(client, responses):
@@ -184,3 +199,69 @@ class TestHostNormalisation:
 
     def test_https_when_port_443(self):
         assert DahuaClient("h", "u", "p", port=443)._base == "https://h:443"
+
+
+class TestDownloadClip:
+    """Pulling recorded video, which ffmpeg has to be able to open."""
+
+    PREAMBLE = bytes(range(256)) * 38  # 9728 bytes, no DHAV anywhere in it
+    CLIP = b"DHAV\x00\x01\x02frame-data-here"
+
+    async def test_strips_the_preamble_so_ffmpeg_sees_dhav(self, client):
+        """Left in place, ffmpeg reads the file as raw hevc and loses timing."""
+        stub_bytes(client, self.PREAMBLE + self.CLIP)
+        data = await client.async_download_clip(
+            "2026-09-14 03:42:00", "2026-09-14 03:43:30", channel=4
+        )
+        assert data == self.CLIP
+        assert data.startswith(b"DHAV")
+
+    async def test_preamble_length_is_not_assumed(self, client):
+        """9733 and 12770 bytes were seen minutes apart on one recorder."""
+        for pad in (0, 9733, 12770):
+            stub_bytes(client, bytes(pad) + self.CLIP)
+            data = await client.async_download_clip(
+                "2026-09-14 03:00:00", "2026-09-14 03:01:00"
+            )
+            assert data == self.CLIP, pad
+
+    async def test_timestamps_are_encoded(self, client):
+        calls = stub_bytes(client, self.PREAMBLE + self.CLIP)
+        await client.async_download_clip(
+            "2026-09-14 03:42:00", "2026-09-14 03:43:30", channel=4
+        )
+        assert " " not in calls[0]
+        assert "startTime=2026-09-14%2003:42:00" in calls[0]
+        assert "channel=4" in calls[0]
+        assert "subtype=0" in calls[0]
+
+    async def test_substream_can_be_requested(self, client):
+        calls = stub_bytes(client, self.CLIP)
+        await client.async_download_clip("a 1", "b 2", subtype=1)
+        assert "subtype=1" in calls[0]
+
+    async def test_channel_zero_rejected(self, client):
+        with pytest.raises(ValueError, match="1-based"):
+            await client.async_download_clip("a 1", "b 2", channel=0)
+
+    async def test_inverted_range_rejected_before_the_request(self, client):
+        calls = stub_bytes(client, self.CLIP)
+        with pytest.raises(ValueError, match="not after"):
+            await client.async_download_clip(
+                "2026-09-14 04:00:00", "2026-09-14 03:00:00"
+            )
+        assert not calls
+
+    async def test_empty_range_rejected(self, client):
+        with pytest.raises(ValueError, match="not after"):
+            await client.async_download_clip(
+                "2026-09-14 03:00:00", "2026-09-14 03:00:00"
+            )
+
+    async def test_a_range_with_no_recording_is_an_error_not_junk(self, client):
+        """The recorder answers 200 with a short body rather than an HTTP error."""
+        stub_bytes(client, b"Error\r\nBad Request!")
+        with pytest.raises(DahuaResponseError, match="No recording between"):
+            await client.async_download_clip(
+                "2026-09-14 03:00:00", "2026-09-14 03:01:00"
+            )

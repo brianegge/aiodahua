@@ -29,12 +29,14 @@ from .exceptions import DahuaNotSupportedError
 from .exceptions import DahuaResponseError
 from .exceptions import DahuaTimeoutError
 from .exceptions import DahuaUnsafeOperationError
+from .exceptions import DahuaValueError
 from .parsers import is_error_response
 from .parsers import is_not_supported_response
 from .parsers import parse_kv
 from .parsers import parse_log_entries
 from .parsers import parse_media_files
 from .parsers import parse_storage_info
+from .parsers import strip_dhav_preamble
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -558,6 +560,71 @@ class DahuaClient:
             await self.async_get_text("storageDevice.cgi?action=getDeviceAllInfo")
         )
 
+    async def async_download_clip(
+        self,
+        start_time: str,
+        end_time: str,
+        channel: int = 1,
+        subtype: int = 0,
+    ) -> bytes:
+        """Download a time range of recorded video, ready for ffmpeg.
+
+        Cuts the range on the recorder rather than fetching a whole segment:
+        stored segments run an hour per channel and are around 1.8 GB, while
+        90 seconds of 4K HEVC comes back as roughly 46 MB. There is no need to
+        call :meth:`async_find_recordings` first -- the recorder resolves the
+        time range itself -- though doing so tells you whether anything was
+        recorded before you download.
+
+        The returned bytes have the preamble removed and start at the first
+        DHAV frame header, so they can be written straight to a file and
+        opened with ffmpeg. See :func:`~aiodahua.parsers.strip_dhav_preamble`
+        for why that matters.
+
+        Args:
+            start_time: ``"YYYY-MM-DD HH:MM:SS"``.
+            end_time: ``"YYYY-MM-DD HH:MM:SS"``.
+            channel: 1-based, like :meth:`async_find_recordings`.
+            subtype: ``0`` main stream, ``1`` sub stream.
+
+        Returns:
+            DHAV-framed video.
+
+        Raises:
+            DahuaValueError: if the channel is below 1, or the range is empty
+                or inverted.
+            DahuaResponseError: if the recorder has nothing for that range.
+
+        Note:
+            Whole clips are held in memory. At 4K a few minutes is already
+            hundreds of megabytes, so ask for the range you actually want.
+        """
+        if channel < 1:
+            raise DahuaValueError(
+                "channel is 1-based; channel 0 is rejected by firmware"
+            )
+        if end_time <= start_time:
+            raise DahuaValueError(
+                f"end_time {end_time!r} is not after start_time {start_time!r}"
+            )
+
+        start = quote(start_time, safe=":-")
+        end = quote(end_time, safe=":-")
+        raw = await self.async_get_bytes(
+            f"loadfile.cgi?action=startLoad&channel={channel}"
+            f"&startTime={start}&endTime={end}&subtype={subtype}"
+        )
+        try:
+            return strip_dhav_preamble(raw)
+        except ValueError as err:
+            # A range the recorder has nothing for comes back as a short body
+            # rather than an HTTP error, so this is the first point it shows.
+            raise DahuaResponseError(
+                f"No recording between {start_time} and {end_time} on channel {channel}",
+                endpoint="loadfile.cgi?action=startLoad",
+                body=raw[:200].decode("utf-8", "replace"),
+            ) from err
+
     async def async_find_recordings(
         self,
         start_time: str,
@@ -578,7 +645,9 @@ class DahuaClient:
             (``regular`` / ``motion`` / ``alarm``).
         """
         if channel < 1:
-            raise ValueError("channel is 1-based; channel 0 is rejected by firmware")
+            raise DahuaValueError(
+                "channel is 1-based; channel 0 is rejected by firmware"
+            )
 
         created = await self.async_get_text("mediaFileFind.cgi?action=factory.create")
         if "=" not in created:
