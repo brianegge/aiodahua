@@ -53,6 +53,11 @@ class DigestAuth:
         self.challenge: dict[str, str] | None = previous.get("challenge")
         self.args: dict[str, Any] = {}
         self.session = session
+        # Guards against re-challenging forever. Without it, credentials the
+        # device rejects produce an unbounded chain of 401 -> retry -> 401,
+        # each one a fresh request that counts towards the device's own
+        # failed-login lockout (LockLoginTimes defaults to 5 or 10).
+        self._challenged = False
 
     async def request(
         self,
@@ -172,7 +177,8 @@ class DigestAuth:
         auth_header = response.headers.get("www-authenticate", "")
 
         parts = auth_header.split(" ", 1)
-        if parts[0].lower() == "digest" and len(parts) > 1:
+        if parts[0].lower() == "digest" and len(parts) > 1 and not self._challenged:
+            self._challenged = True
             # Close the initial response since we are going making another request and return that response
             response.close()
 

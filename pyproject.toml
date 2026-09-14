@@ -40,7 +40,6 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
-    "aioresponses",
 ]
 
 [tool.hatch.build.targets.wheel]

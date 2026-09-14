@@ -6,15 +6,21 @@ but they identify themselves differently and their firmware builds diverge in
 which endpoints actually work. This module works out which brand you are
 talking to, and what that implies.
 
-Three independent signals are used, in descending order of reliability:
+Three independent signals are used. They are *weighted*, in descending order
+of reliability:
 
-1. ``magicBox.cgi?action=getVendor``. Note this is *not* consistent even within
-   one brand: Amcrest NVRs answer ``AC`` while Amcrest cameras answer
-   ``Amcrest``. Both are handled.
+1. The serial number prefix, e.g. ``AMC``/``AMR`` for Amcrest, ``ND`` for
+   Lorex. The strongest signal: it is baked in at manufacture and no device
+   observed so far lies about it.
 2. The OEM code embedded in the firmware version string. Dahua versions look
    like ``4.000.00AC000.0`` or ``2.622.00AC000.0.R``; the two letters after
-   ``00`` are the OEM code (``AC`` = Amcrest, ``DH`` = Dahua).
-3. The serial number prefix, e.g. ``AMC``/``AMR`` for Amcrest.
+   ``00`` are the OEM code (``AC`` = Amcrest, ``DH`` = Dahua, ``LR`` = Lorex).
+   Absent on some builds -- an NV4108E-HS reports ``4.001.0000005.1``.
+3. ``magicBox.cgi?action=getVendor``. The weakest signal, and not consistent
+   even within one brand: Amcrest NVRs have been seen answering ``AC`` *and*
+   plain ``Dahua``, while Amcrest cameras answer ``Amcrest``. A rebranded
+   device answering ``Dahua`` or ``General`` is saying almost nothing, so it
+   must never outrank a serial prefix.
 
 Identification never fails. An unrecognised device returns
 :attr:`Brand.UNKNOWN` with the raw strings preserved, and every client feature
@@ -30,12 +36,19 @@ from enum import StrEnum
 
 __all__ = [
     "PROFILES",
+    "SIGNAL_WEIGHTS",
     "Brand",
     "BrandMatch",
     "BrandProfile",
     "extract_oem_code",
     "identify_brand",
 ]
+
+# How much each signal counts for. A serial prefix outweighs any single other
+# signal because it is the only one a rebranded device has never been seen to
+# get wrong; getVendor is weakest because "Dahua"/"General" are the factory
+# defaults that many rebrands never change.
+SIGNAL_WEIGHTS = {"serial": 3, "oem_code": 2, "vendor": 1}
 
 # e.g. "4.000.00AC000.0,build:2020-05-21" -> "AC"
 #      "2.622.00AC000.0.R,build:2020-10-22" -> "AC"
@@ -68,6 +81,10 @@ class BrandProfile:
         prefers_audio_backchannel: True when ``audio.cgi`` is known to be
             unreliable on this brand and the RTSP ONVIF backchannel should be
             tried first for speaker playback.
+        audio_cgi_reboots: True when a plain GET of ``audio.cgi`` has been
+            observed to crash and reboot the device. Guarded against rather
+            than merely documented -- see
+            :meth:`aiodahua.DahuaClient.async_get_audio_input`.
         hardware_verified: True only where the identifying strings were
             confirmed against a physical device, rather than taken from
             community reports. Treat unverified entries as best-effort.
@@ -79,6 +96,7 @@ class BrandProfile:
     vendor_aliases: tuple[str, ...] = ()
     serial_prefixes: tuple[str, ...] = ()
     prefers_audio_backchannel: bool = False
+    audio_cgi_reboots: bool = False
     hardware_verified: bool = False
 
 
@@ -105,11 +123,23 @@ PROFILES: dict[Brand, BrandProfile] = {
         display_name="Lorex",
         oem_codes=("LR",),
         vendor_aliases=("lorex", "lr"),
-        serial_prefixes=(),
+        # Observed on six Lorex units: five E891AB cameras (ND0119...) and an
+        # N841A8 recorder (ND0219...). No Dahua-branded device on the same
+        # network uses it.
+        serial_prefixes=("ND",),
         # Community reports consistently describe audio.cgi resetting the
         # connection on Lorex firmware, which is why the HA integration grew an
-        # RTSP backchannel fallback.
+        # RTSP backchannel fallback. On E891AB firmware 2.622 it is worse than
+        # a reset: see audio_cgi_reboots.
         prefers_audio_backchannel=True,
+        # Confirmed on three E891AB cameras running 2.622.00LR000.10.R. A
+        # single GET of audio.cgi takes the camera off the network entirely --
+        # HTTP and RTSP both -- and its own log records "Abort" at the moment of
+        # the request followed by "Start up / Reboot Mark: Abort" ~105s later.
+        audio_cgi_reboots=True,
+        # vendor "LOREX" and OEM code "LR" both read off those cameras and the
+        # N841A8 recorder.
+        hardware_verified=True,
     ),
     Brand.EMPIRETECH: BrandProfile(
         brand=Brand.EMPIRETECH,
@@ -195,6 +225,9 @@ def identify_brand(
     def vote(brand: Brand, signal: str) -> None:
         votes.setdefault(brand, set()).add(signal)
 
+    def score(brand: Brand) -> int:
+        return sum(SIGNAL_WEIGHTS[signal] for signal in votes[brand])
+
     for brand, profile in PROFILES.items():
         if brand is Brand.UNKNOWN:
             continue
@@ -215,10 +248,13 @@ def identify_brand(
             raw_vendor=vendor,
         )
 
-    # Most agreeing signals wins; ties broken by a stable brand order so the
-    # result never depends on dict iteration order.
+    # Highest total weight wins, so a serial prefix beats a lone generic
+    # vendor string: an Amcrest NV4108E-HS answers getVendor="Dahua" and has no
+    # OEM code in "4.001.0000005.1", leaving serial "AMR..." as the only signal
+    # that is actually about the brand. Ties are broken by a stable brand order
+    # so the result never depends on dict iteration order.
     order = list(PROFILES)
-    best = max(votes, key=lambda b: (len(votes[b]), -order.index(b)))
+    best = max(votes, key=lambda b: (score(b), len(votes[b]), -order.index(b)))
     return BrandMatch(
         brand=best,
         profile=PROFILES[best],

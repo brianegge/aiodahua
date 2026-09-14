@@ -12,6 +12,7 @@ import re
 __all__ = [
     "RECORD_TYPES",
     "format_bytes",
+    "is_error_response",
     "is_not_supported_response",
     "parse_kv",
     "parse_log_entries",
@@ -33,9 +34,33 @@ def is_not_supported_response(text: str) -> bool:
     Dahua returns ``Error\\nBad Request!`` (HTTP 400) for endpoints the
     firmware does not implement, which is indistinguishable from a malformed
     request without this check.
+
+    Newer builds say ``Error\\nNot Implemented!`` with HTTP 501 instead --
+    confirmed on an IPC-B54IR-ASE-S3 (3.142.15OG000.0.R) and an
+    IPC-Color4K-T (3.000.0000000.20.R), where the older cameras on the same
+    network answer 400 for the very same endpoint. Both forms mean the same
+    thing to a caller.
     """
     stripped = text.strip().lower()
-    return stripped.startswith("error") and "bad request" in stripped
+    return stripped.startswith("error") and (
+        "bad request" in stripped or "not implemented" in stripped
+    )
+
+
+def is_error_response(text: str) -> bool:
+    """True when the body is an error report rather than ``key=value`` data.
+
+    Some failures come back with HTTP 200 and a body like
+    ``Error: Error -1 getting param in name=Lighting[0][0]`` (an LTN6416
+    recorder, asked for a config section it does not have). That parses into a
+    perfectly plausible-looking dict -- key ``Error: Error -1 getting param in
+    name``, value ``Lighting[0][0]`` -- so without this check the caller is
+    handed junk and told it succeeded.
+
+    Real data never trips this: every genuine line starts with its key, such as
+    ``table.`` or ``status.``.
+    """
+    return text.strip().lower().startswith("error")
 
 
 def parse_kv(text: str, strip_prefix: bool = False) -> dict[str, str]:

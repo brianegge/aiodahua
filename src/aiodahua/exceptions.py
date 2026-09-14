@@ -19,6 +19,7 @@ __all__ = [
     "DahuaNotSupportedError",
     "DahuaResponseError",
     "DahuaTimeoutError",
+    "DahuaUnsafeOperationError",
     "DahuaValueError",
 ]
 
@@ -91,6 +92,20 @@ class DahuaNotSupportedError(DahuaResponseError):
 
     def __init__(self, message: str, *, endpoint: str | None = None) -> None:
         super().__init__(message, status=400, endpoint=endpoint)
+
+
+class DahuaUnsafeOperationError(DahuaError):
+    """The request is known to harm this device, so it was not sent.
+
+    Some firmware does more than refuse a request it cannot serve. A plain GET
+    of ``audio.cgi`` reboots a Lorex E891AB on 2.622 firmware, dropping HTTP
+    and RTSP for around 105 seconds -- long enough for a recorder to log a
+    camera outage. Where a brand profile records that, the library refuses the
+    request rather than performing it.
+
+    Pass ``force=True`` to the method if you own the device and accept the
+    reboot.
+    """
 
 
 class DahuaValueError(DahuaError, ValueError):

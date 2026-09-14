@@ -13,7 +13,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "aioresponses" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -28,7 +27,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "aioresponses" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -160,19 +158,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/5e/19/08d41839658bdd44a0ed2480f3891705ecb487ce28c0dde62c9040c997e0/aiohttp-3.14.3-cp314-cp314t-win32.whl", hash = "sha256:b304db572b4368edd8dda8a2274f73156fe15558fca4a917cb8a09fc47af5963", size = 474180, upload-time = "2026-07-23T01:57:19.306Z" },
     { url = "https://files.pythonhosted.org/packages/99/5d/3cd6ef0a2b2851f7ab913b5b079334781bd50ff56a323e4454063377a080/aiohttp-3.14.3-cp314-cp314t-win_amd64.whl", hash = "sha256:b20032766aedf6261c7a566585a40867d092ac03a0d81592d5370ef9b054f99b", size = 500528, upload-time = "2026-07-23T01:57:21.762Z" },
     { url = "https://files.pythonhosted.org/packages/a4/37/cfd1ed540a4d318da025590d96b728e63713c09e9377950fc655dadeb856/aiohttp-3.14.3-cp314-cp314t-win_arm64.whl", hash = "sha256:2e1161602f45a54de2ce0905243a95f58cb42dcd378402f3697f5e0b21e9d2e7", size = 469280, upload-time = "2026-07-23T01:57:24.241Z" },
-]
-
-[[package]]
-name = "aioresponses"
-version = "0.7.9"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "packaging" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/28/fb/e3f08af812b3e66fca511ea1babb9dfddeca5965dea2a4d13b6926e0b1c2/aioresponses-0.7.9.tar.gz", hash = "sha256:1dcfa28938fc006f046a98383a7c07ac180be7a492c1ed557f5cd7b0805357d3", size = 34072, upload-time = "2026-06-23T21:23:23.828Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/71/55/4c77cda7e69c1ac81a32e6895a361e0da9350eb7835a2ddb161a37ef1ce9/aioresponses-0.7.9-py2.py3-none-any.whl", hash = "sha256:94f9617f841c5bd7ee088ed783284f2cf4e6acc85d3933d92fc2fc7bd572a1b0", size = 12832, upload-time = "2026-06-23T21:23:22.426Z" },
 ]
 
 [[package]]

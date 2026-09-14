@@ -43,11 +43,16 @@ Dahua devices don't advertise their brand consistently — Amcrest *recorders*
 answer `AC` to `getVendor` while Amcrest *cameras* answer `Amcrest`. So three
 independent signals are combined:
 
-| Signal | Example | Notes |
-|---|---|---|
-| `getVendor` | `AC`, `Amcrest`, `Dahua`, `Lorex` | Inconsistent within a brand |
-| Firmware OEM code | `4.000.00**AC**000.0` | The two letters after `00` |
-| Serial prefix | `AMC…`, `AMR…` | Amcrest cameras / recorders |
+| Signal | Weight | Example | Notes |
+|---|---|---|---|
+| Serial prefix | 3 | `AMC…`, `AMR…`, `ND…` | Amcrest cameras / recorders, Lorex |
+| Firmware OEM code | 2 | `4.000.00**AC**000.0` | The two letters after `00`; absent on some builds |
+| `getVendor` | 1 | `AC`, `Amcrest`, `Dahua`, `Lorex`, `General` | Inconsistent even within a brand |
+
+The weights matter. An Amcrest NV4108E-HS answers `getVendor=Dahua` — not
+`AC`, as its NV4116-HS sibling does — and its version `4.001.0000005.1` has no
+OEM code at all, so its `AMR` serial is the only signal that says anything
+about the brand. Unweighted voting called that device a Dahua.
 
 ```python
 from aiodahua import identify_brand
@@ -63,11 +68,17 @@ Identification **never fails**. An unrecognised device returns `Brand.UNKNOWN`
 with the raw strings preserved, and every other feature keeps working — brand
 is used to *predict* quirks, never to gate functionality.
 
-Profiles carry a `hardware_verified` flag. Only Amcrest is `True` today: those
-strings came off real NV4116-HS / NV5232 / NV4432E-HS recorders and IP8M/IP5M
-cameras. Dahua, Lorex and EmpireTech are from community reports — accurate as
-far as we know, but say so honestly. **PRs adding verified brands are very
-welcome**; `PROFILES` in `brands.py` is a plain dict.
+Profiles carry a `hardware_verified` flag. Amcrest and Lorex are `True`: those
+strings came off real NV4116-HS / NV5232 / NV4432E-HS / NV4108E-HS recorders
+and IP8M/IP5M cameras, and off E891AB cameras and an N841A8 recorder. Dahua and
+EmpireTech are from community reports — accurate as far as we know, but say so
+honestly. **PRs adding verified brands are very welcome**; `PROFILES` in
+`brands.py` is a plain dict, and `scripts/interview.py` collects everything a
+new entry needs.
+
+See [docs/hardware.md](docs/hardware.md) for the devices this library has
+actually been run against, and what their firmware does and does not
+implement.
 
 ## Firmware quirks this library handles for you
 
@@ -100,9 +111,35 @@ this. Use `async_find_recordings()` to confirm footage is actually landing.
 
 **Missing endpoints return `Bad Request`, not 404.** Older firmware is missing
 a lot — an NV4116-HS on 2020 firmware has no `getSmartInfo` and no
-`upgrader.cgi`. Those raise `DahuaNotSupportedError` so you can branch on it.
+`upgrader.cgi`. Newer firmware says `Not Implemented` with HTTP 501 instead: an
+IPC-B54IR-ASE-S3 on 2024 firmware answers 501 where the 2019 camera beside it
+answers 400, for the same endpoint. Both raise `DahuaNotSupportedError`.
 
-**`find_recordings` channels are 1-based.** Channel `0` is rejected.
+**Some failures arrive with HTTP 200.** An LTN6416 asked for a config section
+it does not have answers `Error: Error -1 getting param in name=Lighting[0][0]`
+— which parses into a perfectly plausible-looking dict. That raises
+`DahuaResponseError` rather than handing you junk.
+
+**Asking a Lorex for `audio.cgi` reboots it.** One GET takes an E891AB off the
+network, HTTP and RTSP both, for ~105 seconds; the camera's own log records
+`Abort` and then `Start up / Reboot Mark: Abort`. `async_get_audio_input()`
+raises `DahuaUnsafeOperationError` on brands whose profile records this rather
+than sending the request. Pass `force=True` if you own the device and accept
+the reboot.
+
+**`find_recordings` and `audio.cgi` channels are 1-based**, unlike the
+`Encode[n]` config sections. `find_recordings` rejects channel `0` outright;
+`audio.cgi` answers `401 stale=TRUE` and keeps answering it for every retry,
+which reads as a hang.
+
+**Devices that speak HTTPS present a self-signed certificate**, and some
+redirect port 80 to it — an NV4108E-HS answers `302` to `https://<host>:443/`,
+so a request addressed to plain HTTP fails in the TLS handshake. Pass
+`verify_ssl=False`:
+
+```python
+DahuaClient("192.168.4.4", "admin", "secret", port=443, verify_ssl=False)
+```
 
 ## API
 
@@ -160,6 +197,21 @@ It reports the brand, whether audio encoding is on, and exercises
 `audio.cgi` and the RTSP backchannel in turn. **It makes audible noise.**
 Note that neither transport reports whether the speaker actually sounded —
 the camera accepts the stream either way — so judge by ear, not exit code.
+
+## Interviewing a device
+
+`scripts/interview.py` runs every read-only capability probe this library
+knows about and prints what the firmware supports, plus a Markdown row for
+[docs/hardware.md](docs/hardware.md):
+
+```bash
+python scripts/interview.py 192.168.1.50 admin secret --json my-camera.json
+```
+
+It covers identity, video codecs, stream counts, SNMP, storage, recordings,
+PTZ, motorised lens, white light and siren, smart motion, IVS, audio and the
+event stream. Secrets are redacted: serials are truncated to the prefix brand
+identification uses, and SNMP community strings are never printed.
 
 ## Credits
 

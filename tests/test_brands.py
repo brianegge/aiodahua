@@ -80,12 +80,90 @@ class TestIdentifyOtherBrands:
         assert match.brand is Brand.LOREX
         assert match.profile.prefers_audio_backchannel is True
 
+    def test_lorex_reboots_on_audio_cgi(self):
+        """Confirmed on three E891AB cameras running 2.622.00LR000.10.R."""
+        assert identify_brand(vendor="Lorex").profile.audio_cgi_reboots is True
+
+    def test_amcrest_does_not_reboot_on_audio_cgi(self):
+        """An IP5M-T1179E and an NV4108E-HS both survived the same probe."""
+        assert identify_brand(vendor="AC").profile.audio_cgi_reboots is False
+
     def test_amcrest_does_not_prefer_backchannel(self):
         assert identify_brand(vendor="AC").profile.prefers_audio_backchannel is False
 
     def test_unverified_profiles_are_flagged(self):
         """Brands we have not confirmed on hardware must say so."""
-        assert identify_brand(vendor="Lorex").profile.hardware_verified is False
+        assert identify_brand(vendor="EmpireTech").profile.hardware_verified is False
+
+    def test_lorex_is_hardware_verified(self):
+        """vendor "LOREX" and OEM code "LR" read off E891AB and N841A8 units."""
+        assert identify_brand(vendor="Lorex").profile.hardware_verified is True
+
+
+class TestWeighting:
+    """Signals disagree constantly on real hardware; weight decides."""
+
+    def test_serial_prefix_beats_a_generic_vendor_string(self):
+        """An Amcrest NV4108E-HS, read off the device.
+
+        It answers getVendor="Dahua" -- not "AC" as its NV4116-HS sibling does
+        -- and its version carries no OEM code, so the serial is the only
+        signal that says anything about the brand. Equal-count voting used to
+        hand this to Dahua on a tie-break.
+        """
+        match = identify_brand(
+            vendor="Dahua",
+            version="4.001.0000005.1,build:2021-07-13",
+            serial="AMR013C3556656F6E1",
+        )
+        assert match.brand is Brand.AMCREST
+        assert match.matched_on == ("serial",)
+        assert match.is_confident is False
+
+    def test_lorex_recorder_answering_dahua(self):
+        """An N841A8: vendor "Dahua", but OEM code LR and an ND serial."""
+        match = identify_brand(
+            vendor="Dahua",
+            version="3.216.00LR035.0,build:2021-07-15",
+            serial="ND021911070188",
+        )
+        assert match.brand is Brand.LOREX
+        assert set(match.matched_on) == {"oem_code", "serial"}
+        assert match.is_confident is True
+
+    def test_lorex_camera_agrees_with_itself(self):
+        """An E891AB agrees on all three signals."""
+        match = identify_brand(
+            vendor="LOREX",
+            version="2.622.00LR000.10.R,build:2019-03-19",
+            serial="ND011912041000",
+        )
+        assert match.brand is Brand.LOREX
+        assert set(match.matched_on) == {"vendor", "oem_code", "serial"}
+
+    def test_amcrest_camera_agrees_with_itself(self):
+        """An IP5M-T1179E."""
+        match = identify_brand(
+            vendor="Amcrest",
+            version="2.800.00AC001.0.R,build:2020-12-30",
+            serial="AMC060E2586932DD02",
+        )
+        assert match.brand is Brand.AMCREST
+        assert set(match.matched_on) == {"vendor", "oem_code", "serial"}
+
+    def test_unknown_oem_code_does_not_derail_identification(self):
+        """An IPC-T5442TM-AS: OEM code "OG" belongs to no profile."""
+        match = identify_brand(vendor="General", version="2.840.15OG00D.0.R")
+        assert match.brand is Brand.DAHUA
+        assert match.oem_code == "OG"
+        assert match.matched_on == ("vendor",)
+
+    def test_two_weak_signals_beat_one_strong_one(self):
+        """Firmware quirks follow the firmware, so vendor+OEM outrank a serial."""
+        match = identify_brand(
+            vendor="Dahua", version="4.000.00DH000.0", serial="AMC123"
+        )
+        assert match.brand is Brand.DAHUA
 
 
 class TestIdentifyUnknown:
