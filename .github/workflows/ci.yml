@@ -4,16 +4,29 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  # Lets a branch be checked before it has a PR. The branch that became PR #1
+  # sat unformatted for a day because nothing ran on it.
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
       - name: Install
@@ -24,3 +37,35 @@ jobs:
         run: uv run ruff format --check .
       - name: Test
         run: uv run pytest -q
+
+  package:
+    # Home Assistant installs this from PyPI, so a package that does not build
+    # or import cleanly from the wheel breaks the integration at startup rather
+    # than in CI. Checked here instead of at publish time.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Build sdist and wheel
+        run: uv build
+      - name: Verify metadata
+        run: uvx twine check dist/*
+      - name: Install the wheel into a clean venv and import it
+        run: |
+          uv venv /tmp/wheeltest
+          uv pip install --python /tmp/wheeltest/bin/python dist/*.whl
+          /tmp/wheeltest/bin/python -c "
+          import aiodahua
+          from aiodahua import DahuaClient, identify_brand
+          print('version', aiodahua.__version__)
+          m = identify_brand(vendor='AC', version='4.000.00AC000.0')
+          assert str(m) == 'Amcrest', m
+          assert DahuaClient('h', 'u', 'p')._base == 'http://h:80'
+          print('wheel imports and works')
+          "
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
