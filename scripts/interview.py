@@ -192,7 +192,9 @@ class Interview:
 
     @staticmethod
     def _main_stream(config: dict) -> str:
-        get = lambda field: config.get(f"table.Encode[0].MainFormat[0].Video.{field}", "?")  # noqa: E731
+        def get(field: str) -> str:
+            return config.get(f"table.Encode[0].MainFormat[0].Video.{field}", "?")
+
         return f"{get('Compression')} {get('Width')}x{get('Height')} @{get('FPS')}"
 
     @staticmethod
@@ -227,9 +229,12 @@ class Interview:
 
     async def _https(self) -> str:
         """Does port 80 redirect to a self-signed HTTPS endpoint?"""
-        async with aiohttp.ClientSession() as session, session.get(
-            f"http://{self.client.host}/", allow_redirects=False, ssl=False
-        ) as response:
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(
+                f"http://{self.client.host}/", allow_redirects=False, ssl=False
+            ) as response,
+        ):
             location = response.headers.get("Location", "")
             if response.status in (301, 302, 303, 307, 308) and "https" in location:
                 return "port 80 redirects to HTTPS (needs verify_ssl=False)"

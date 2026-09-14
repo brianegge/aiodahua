@@ -64,7 +64,9 @@ class FakeSession:
         self.calls = []
 
     async def request(self, method, url, headers=None, **kwargs):
-        self.calls.append({"method": method, "url": url, "headers": headers or {}, **kwargs})
+        self.calls.append(
+            {"method": method, "url": url, "headers": headers or {}, **kwargs}
+        )
         for entry in self.queue:
             needle, response = entry[0], entry[1]
             if needle in url:
@@ -97,7 +99,9 @@ class TestMissingEndpoints:
 
     async def test_400_bad_request(self):
         """Older firmware: E891AB 2.622, NV4116-HS 4.000."""
-        client, _ = make_client([(VENDOR, FakeResponse(400, "Error\r\nBad Request!\r\n"))])
+        client, _ = make_client(
+            [(VENDOR, FakeResponse(400, "Error\r\nBad Request!\r\n"))]
+        )
         with pytest.raises(DahuaNotSupportedError):
             await client.async_get_text("magicBox.cgi?action=getVendor")
 
@@ -122,14 +126,21 @@ class TestMissingEndpoints:
 
     async def test_other_4xx_stays_a_response_error(self):
         """A 400 that is not the "missing endpoint" body must not be swallowed."""
-        client, _ = make_client([(VENDOR, FakeResponse(400, "something else entirely"))])
+        client, _ = make_client(
+            [(VENDOR, FakeResponse(400, "something else entirely"))]
+        )
         with pytest.raises(DahuaResponseError) as err:
             await client.async_get_text("magicBox.cgi?action=getVendor")
         assert not isinstance(err.value, DahuaNotSupportedError)
 
     async def test_snapshot_bytes_still_come_back_whole(self):
-        client, _ = make_client([("snapshot.cgi", FakeResponse(200, b"\xff\xd8\xffdata"))])
-        assert await client.async_get_bytes("snapshot.cgi?channel=1") == b"\xff\xd8\xffdata"
+        client, _ = make_client(
+            [("snapshot.cgi", FakeResponse(200, b"\xff\xd8\xffdata"))]
+        )
+        assert (
+            await client.async_get_bytes("snapshot.cgi?channel=1")
+            == b"\xff\xd8\xffdata"
+        )
 
 
 class TestErrorBodyWithHttp200:
@@ -140,7 +151,14 @@ class TestErrorBodyWithHttp200:
         which looks exactly like a successful read.
         """
         client, _ = make_client(
-            [(VENDOR, FakeResponse(200, "Error: Error -1 getting param in name=Lighting[0][0]"))]
+            [
+                (
+                    VENDOR,
+                    FakeResponse(
+                        200, "Error: Error -1 getting param in name=Lighting[0][0]"
+                    ),
+                )
+            ]
         )
         with pytest.raises(DahuaResponseError) as err:
             await client.async_get_text("magicBox.cgi?action=getVendor")
@@ -148,7 +166,9 @@ class TestErrorBodyWithHttp200:
 
     async def test_real_data_is_untouched(self):
         client, _ = make_client([(VENDOR, FakeResponse(200, "vendor=Dahua\r\n"))])
-        assert await client.async_get("magicBox.cgi?action=getVendor") == {"vendor": "Dahua"}
+        assert await client.async_get("magicBox.cgi?action=getVendor") == {
+            "vendor": "Dahua"
+        }
 
 
 class TestDigestReuse:
@@ -159,11 +179,13 @@ class TestDigestReuse:
         "Connection: close") and its own Login/Logout pair in the device's
         finite audit log.
         """
-        client, session = make_client([
-            (VENDOR, FakeResponse(401, "", CHALLENGE)),
-            (VENDOR, FakeResponse(200, "vendor=Dahua")),
-            (TYPE, FakeResponse(200, "type=E891AB")),
-        ])
+        client, session = make_client(
+            [
+                (VENDOR, FakeResponse(401, "", CHALLENGE)),
+                (VENDOR, FakeResponse(200, "vendor=Dahua")),
+                (TYPE, FakeResponse(200, "type=E891AB")),
+            ]
+        )
         await client.async_get_text("magicBox.cgi?action=getVendor")
         assert client._digest_state["challenge"]["nonce"] == "4220250"
         assert session.count(VENDOR) == 2  # challenge + answer
@@ -173,11 +195,13 @@ class TestDigestReuse:
         assert "AUTHORIZATION" in session.calls[-1]["headers"]
 
     async def test_nonce_count_increments(self):
-        client, _ = make_client([
-            (VENDOR, FakeResponse(401, "", CHALLENGE)),
-            (VENDOR, FakeResponse(200, "vendor=Dahua")),
-            (TYPE, FakeResponse(200, "type=E891AB")),
-        ])
+        client, _ = make_client(
+            [
+                (VENDOR, FakeResponse(401, "", CHALLENGE)),
+                (VENDOR, FakeResponse(200, "vendor=Dahua")),
+                (TYPE, FakeResponse(200, "type=E891AB")),
+            ]
+        )
         await client.async_get_text("magicBox.cgi?action=getVendor")
         first = client._digest_state["nonce_count"]
         await client.async_get_text("magicBox.cgi?action=getDeviceType")
@@ -190,11 +214,13 @@ class TestDigestReuse:
         is 5 or 10 on the cameras here, with a 300s LoginFailLockTime -- so a
         mistyped password could lock the account out of the device entirely.
         """
-        client, session = make_client([
-            (VENDOR, FakeResponse(401, "", CHALLENGE)),
-            (VENDOR, FakeResponse(401, "", CHALLENGE)),
-            (VENDOR, FakeResponse(401, "", CHALLENGE)),
-        ])
+        client, session = make_client(
+            [
+                (VENDOR, FakeResponse(401, "", CHALLENGE)),
+                (VENDOR, FakeResponse(401, "", CHALLENGE)),
+                (VENDOR, FakeResponse(401, "", CHALLENGE)),
+            ]
+        )
         with pytest.raises(DahuaAuthError):
             await client.async_get_text("magicBox.cgi?action=getVendor")
         assert session.count(VENDOR) == 2  # the challenge and one retry, no more
@@ -245,11 +271,13 @@ class TestAudioProbeGuard:
 
     async def test_identifies_first_when_brand_is_unknown(self):
         """The guard is useless if it only works after an explicit identify."""
-        client, session = make_client([
-            (VENDOR, FakeResponse(200, "vendor=LOREX")),
-            ("getSoftwareVersion", FakeResponse(200, "version=2.622.00LR000.10.R")),
-            ("getSerialNo", FakeResponse(200, "sn=ND011912041000")),
-        ])
+        client, session = make_client(
+            [
+                (VENDOR, FakeResponse(200, "vendor=LOREX")),
+                ("getSoftwareVersion", FakeResponse(200, "version=2.622.00LR000.10.R")),
+                ("getSerialNo", FakeResponse(200, "sn=ND011912041000")),
+            ]
+        )
         with pytest.raises(DahuaUnsafeOperationError):
             await client.async_get_audio_input(1)
         assert session.count(AUDIO) == 0
@@ -263,7 +291,9 @@ class TestAudioProbeGuard:
         assert response.closed is True
 
     async def test_device_that_refuses_audio_returns_false(self):
-        client, _ = make_client([(AUDIO, FakeResponse(400, "Error\r\nBad Request!\r\n"))])
+        client, _ = make_client(
+            [(AUDIO, FakeResponse(400, "Error\r\nBad Request!\r\n"))]
+        )
         client._brand = identify_brand(vendor="Amcrest")
         assert await client.async_get_audio_input(1) is False
 
@@ -287,11 +317,13 @@ class TestAudioProbeGuard:
             "www-authenticate": 'Digest realm="Login to AMC0", qop="auth", '
             'nonce="9", algorithm=MD5, stale=TRUE'
         }
-        client, session = make_client([
-            (AUDIO, FakeResponse(401, "", stale)),
-            (AUDIO, FakeResponse(401, "", stale)),
-            (AUDIO, FakeResponse(401, "", stale)),
-        ])
+        client, session = make_client(
+            [
+                (AUDIO, FakeResponse(401, "", stale)),
+                (AUDIO, FakeResponse(401, "", stale)),
+                (AUDIO, FakeResponse(401, "", stale)),
+            ]
+        )
         client._brand = identify_brand(vendor="Amcrest")
         with pytest.raises(DahuaAuthError):
             await client.async_get_audio_input(1)
