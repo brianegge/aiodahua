@@ -227,6 +227,14 @@ PTZ, motorised lens, white light and siren, smart motion, IVS, audio and the
 event stream. Secrets are redacted: serials are truncated to the prefix brand
 identification uses, and SNMP community strings are never printed.
 
+## Authentication
+
+Digest, with a one-shot fallback to basic when a device rejects it -- some
+firmware, and some accounts on otherwise digest-capable firmware, accept
+nothing else. The switch is sticky per client, so a device that wants basic
+only pays for the negotiation once. Pass `basic_auth_fallback=False` to keep
+the password off the wire in a form the device can log verbatim.
+
 ## Credits
 
 The digest-auth implementation and a good deal of protocol knowledge come from

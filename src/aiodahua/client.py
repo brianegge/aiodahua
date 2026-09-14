@@ -85,6 +85,11 @@ class DahuaClient:
     The client does not own its :class:`aiohttp.ClientSession` unless it
     created one, so it is safe to pass Home Assistant's shared session.
 
+    Authentication is digest, falling back to basic once if a device rejects
+    it -- some firmware and some accounts accept nothing else. Pass
+    ``basic_auth_fallback=False`` to keep the password off the wire in a form
+    the device may log verbatim.
+
     Devices that answer on HTTPS present a self-signed certificate, and some
     redirect port 80 to it -- an Amcrest NV4108E-HS answers ``302`` to
     ``https://<host>:443/``. Verification then fails on a request that was
@@ -108,6 +113,7 @@ class DahuaClient:
         timeout: int = DEFAULT_TIMEOUT,
         tls: bool = False,
         verify_ssl: bool = True,
+        basic_auth_fallback: bool = True,
     ) -> None:
         # Trailing slashes would produce URLs like http://host/:80
         host = host.rstrip("/")
@@ -130,6 +136,11 @@ class DahuaClient:
         # costs an extra round trip and an extra TCP connection -- and shows up
         # as its own Login/Logout pair in the device's finite audit log.
         self._digest_state: dict[str, Any] = {}
+        # Some firmware, and some accounts on otherwise digest-capable
+        # firmware, accept nothing but basic auth. The switch is sticky: once a
+        # device has shown it wants basic, later requests go straight there.
+        self._basic_auth_fallback = basic_auth_fallback
+        self._use_basic_auth = False
         # Alias so carried-over methods read naturally.
         self._address = host
 
@@ -170,6 +181,42 @@ class DahuaClient:
             "nonce_count": auth.nonce_count,
             "challenge": auth.challenge,
         }
+
+    async def _authed_request(
+        self, method: str, url: str, **kwargs: Any
+    ) -> aiohttp.ClientResponse:
+        """Make an authenticated request, negotiating digest then basic.
+
+        Digest is tried first because it is what nearly every Dahua device
+        wants. A 401 that survives the digest handshake means this one does
+        not, so basic is tried once and remembered for later requests.
+        """
+        session = self._get_session()
+        if self._use_basic_auth:
+            return await session.request(method, url, **self._basic(kwargs))
+
+        auth = self._digest()
+        response = await auth.request(method, url, **kwargs)
+        self._remember_digest(auth)
+
+        if response.status == 401 and self._basic_auth_fallback:
+            response.close()
+            self._use_basic_auth = True
+            _LOGGER.debug("%s: digest rejected, falling back to basic auth", self._host)
+            return await session.request(method, url, **self._basic(kwargs))
+        return response
+
+    def _basic(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """Add a basic Authorization header without clobbering other headers.
+
+        aiohttp's BasicAuth is deprecated and goes away in 4.0, so the header
+        is built directly.
+        """
+        headers = dict(kwargs.get("headers") or {})
+        headers["Authorization"] = aiohttp.encode_basic_auth(
+            self._username, self._password
+        )
+        return {**kwargs, "headers": headers}
 
     def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None:
@@ -216,9 +263,7 @@ class DahuaClient:
         response = None
         try:
             async with asyncio.timeout(self._timeout):
-                auth = self._digest()
-                response = await auth.request("GET", url, ssl=self._ssl)
-                self._remember_digest(auth)
+                response = await self._authed_request("GET", url, ssl=self._ssl)
                 text = await response.text()
 
                 if response.status == 401:
@@ -286,9 +331,7 @@ class DahuaClient:
         response = None
         try:
             async with asyncio.timeout(self._timeout):
-                auth = self._digest()
-                response = await auth.request("GET", url, ssl=self._ssl)
-                self._remember_digest(auth)
+                response = await self._authed_request("GET", url, ssl=self._ssl)
                 if response.status == 401:
                     raise DahuaAuthError(f"Authentication failed for {self._host}")
                 if response.status in (400, 501):
@@ -1539,9 +1582,7 @@ class DahuaClient:
         response = None
         try:
             async with asyncio.timeout(self._timeout):
-                auth = self._digest()
-                response = await auth.request("GET", url, ssl=self._ssl)
-                self._remember_digest(auth)
+                response = await self._authed_request("GET", url, ssl=self._ssl)
                 if response.status == 401:
                     raise DahuaAuthError(f"Authentication failed for {self._host}")
                 return response.status < 400
