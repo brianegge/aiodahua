@@ -1366,12 +1366,21 @@ class DahuaClient:
         url = "/cgi-bin/configManager.cgi?action=setConfig&MotionDetect[{channel}].Enable={enabled}&MotionDetect[{channel}].DetectVersion=V3.0".format(
             channel=channel, enabled=str(enabled).lower()
         )
-        response = await self.get(url)
+        # This first call is a probe: older cameras have no DetectVersion and
+        # say so. They may answer with an error body, an error status, or a
+        # non-OK 200, and all three mean "try the legacy form" rather than
+        # "give up" -- so the failure is swallowed here deliberately.
+        try:
+            response = await self.get(url)
+            if "OK" in response:
+                return response
+        except DahuaResponseError as err:
+            _LOGGER.debug(
+                "%s: V3.0 motion detect rejected (%s); trying the legacy API",
+                self._host,
+                err,
+            )
 
-        if "OK" in response:
-            return response
-
-        # Some older cameras do not support the above API, so try this one
         url = "/cgi-bin/configManager.cgi?action=setConfig&MotionDetect[{0}].Enable={1}".format(
             channel, str(enabled).lower()
         )

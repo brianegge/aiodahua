@@ -397,3 +397,48 @@ class TestAudioProbeGuard:
         with pytest.raises(DahuaTimeoutError):
             await client.async_get_audio_input(1)
         assert loop.time() - started < 3
+
+
+class TestMotionDetectFallback:
+    """Older cameras have no DetectVersion; the probe must not be fatal."""
+
+    async def test_error_body_on_the_probe_falls_back_to_the_legacy_api(self):
+        """Since 0.4.0 a 200 with an "Error" body raises, which silently killed
+        this fallback: motion detection stopped being settable on any camera
+        that rejects the V3.0 form."""
+        client, session = make_client(
+            [
+                ("DetectVersion=V3.0", FakeResponse(200, "Error")),
+                ("MotionDetect", FakeResponse(200, "OK")),
+            ]
+        )
+        result = await client.enable_motion_detection(0, True)
+        assert "OK" in result
+        assert session.count("DetectVersion=V3.0") == 1
+        assert len(session.calls) == 2, "the legacy URL must still be tried"
+
+    async def test_error_status_on_the_probe_also_falls_back(self):
+        client, session = make_client(
+            [
+                ("DetectVersion=V3.0", FakeResponse(501, "Error\nNot Implemented!")),
+                ("MotionDetect", FakeResponse(200, "OK")),
+            ]
+        )
+        assert "OK" in await client.enable_motion_detection(0, True)
+        assert len(session.calls) == 2
+
+    async def test_success_on_the_probe_skips_the_legacy_call(self):
+        client, session = make_client([("DetectVersion=V3.0", FakeResponse(200, "OK"))])
+        assert "OK" in await client.enable_motion_detection(0, True)
+        assert len(session.calls) == 1, "no need for the legacy URL"
+
+    async def test_legacy_call_failing_still_raises(self):
+        """Swallowing the probe must not swallow a real failure."""
+        client, _ = make_client(
+            [
+                ("DetectVersion=V3.0", FakeResponse(200, "Error")),
+                ("MotionDetect", FakeResponse(200, "Error")),
+            ]
+        )
+        with pytest.raises(DahuaResponseError):
+            await client.enable_motion_detection(0, True)
