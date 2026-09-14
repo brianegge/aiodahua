@@ -104,6 +104,11 @@ async def main() -> int:
         default="both",
         help="Which speaker transport to exercise",
     )
+    parser.add_argument(
+        "--force-cgi",
+        action="store_true",
+        help="POST to audio.cgi even on a brand whose firmware reboots on it",
+    )
     args = parser.parse_args()
 
     audio = _convert(args.file) if args.file else _make_tone(args.seconds)
@@ -117,7 +122,15 @@ async def main() -> int:
         print(
             f"{INFO} brand  : {brand} (matched on {', '.join(brand.matched_on) or 'nothing'})"
         )
-        if brand.profile.prefers_audio_backchannel:
+        if brand.profile.audio_cgi_reboots and args.path in ("cgi", "both"):
+            print(
+                f"{INFO} note   : this brand REBOOTS on audio.cgi -- a Lorex"
+                " E891AB drops HTTP and RTSP for ~105s. Skipping that path;"
+                " pass --force-cgi to do it anyway."
+            )
+            if not args.force_cgi:
+                args.path = "backchannel" if args.path == "both" else "none"
+        elif brand.profile.prefers_audio_backchannel:
             print(
                 f"{INFO} note   : this brand is known to reset audio.cgi;"
                 " the backchannel is the expected path"
@@ -146,7 +159,11 @@ async def main() -> int:
             print("audio.cgi multipart ... listen for a beep")
             try:
                 await dev.async_post_audio(
-                    audio, args.channel, encoding="AAC", duration=duration
+                    audio,
+                    args.channel,
+                    encoding="AAC",
+                    duration=duration,
+                    force=args.force_cgi,
                 )
                 print(f"  {OK} no error from audio.cgi")
             except Exception as err:

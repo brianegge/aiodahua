@@ -135,10 +135,11 @@ it does not have answers `Error: Error -1 getting param in name=Lighting[0][0]`
 
 **Asking a Lorex for `audio.cgi` reboots it.** One GET takes an E891AB off the
 network, HTTP and RTSP both, for ~105 seconds; the camera's own log records
-`Abort` and then `Start up / Reboot Mark: Abort`. `async_get_audio_input()`
-raises `DahuaUnsafeOperationError` on brands whose profile records this rather
-than sending the request. Pass `force=True` if you own the device and accept
-the reboot.
+`Abort` and then `Start up / Reboot Mark: Abort`. `async_get_audio_input()` and
+`async_post_audio()` both raise `DahuaUnsafeOperationError` on brands whose
+profile records this, rather than sending the request — use
+`async_post_audio_backchannel()` there, which is the path the profile prefers
+anyway. Pass `force=True` if you own the device and accept the reboot.
 
 **`find_recordings` and `audio.cgi` channels are 1-based**, unlike the
 `Encode[n]` config sections. `find_recordings` rejects channel `0` outright;

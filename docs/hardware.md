@@ -72,6 +72,12 @@ log records `Abort` at the moment of the request followed by `Start up` with
 Amcrest units on the same network take the request without complaint. This is
 what `audio_cgi_reboots` on the Lorex profile guards against.
 
+Only the plain GET has been seen to do this. Whether closing the response
+sooner, or the speaker POST, behaves any better is **untested and will stay
+that way** -- each attempt costs a real camera a reboot, and the RTSP
+backchannel is the path this brand wants anyway. Both `async_get_audio_input()`
+and `async_post_audio()` refuse on the Lorex profile.
+
 **`audio.cgi` channels are 1-based**, unlike the `Encode[n]` config sections.
 Channel `0` is answered with `401 stale=TRUE`, which invites a retry that is
 answered the same way, forever. Confirmed on the IPC-B54IR-ASE-S3, the
