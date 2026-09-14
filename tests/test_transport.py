@@ -220,11 +220,79 @@ class TestDigestReuse:
                 (VENDOR, FakeResponse(401, "", CHALLENGE)),
                 (VENDOR, FakeResponse(401, "", CHALLENGE)),
                 (VENDOR, FakeResponse(401, "", CHALLENGE)),
+                (VENDOR, FakeResponse(401, "", CHALLENGE)),
             ]
         )
         with pytest.raises(DahuaAuthError):
             await client.async_get_text("magicBox.cgi?action=getVendor")
-        assert session.count(VENDOR) == 2  # the challenge and one retry, no more
+        # The challenge, one digest retry, one basic attempt. Then it stops.
+        assert session.count(VENDOR) == 3
+
+
+class TestBasicAuthFallback:
+    """Some firmware, and some accounts, accept nothing but basic auth.
+
+    dahua-mcp carried this fallback; the library now owns it, so every caller
+    gets it rather than each one rediscovering it.
+    """
+
+    async def test_falls_back_after_digest_is_rejected(self):
+        client, session = make_client(
+            [
+                (VENDOR, FakeResponse(401, "", CHALLENGE)),
+                (VENDOR, FakeResponse(401, "", CHALLENGE)),
+                (VENDOR, FakeResponse(200, "vendor=Dahua")),
+            ]
+        )
+        assert await client.async_get_text("magicBox.cgi?action=getVendor")
+        assert session.calls[-1]["headers"]["Authorization"].startswith("Basic ")
+        assert client._use_basic_auth is True
+
+    async def test_the_switch_is_sticky(self):
+        """Once a device has shown it wants basic, stop paying for digest."""
+        client, session = make_client(
+            [
+                (VENDOR, FakeResponse(401, "", CHALLENGE)),
+                (VENDOR, FakeResponse(401, "", CHALLENGE)),
+                (VENDOR, FakeResponse(200, "vendor=Dahua")),
+                (TYPE, FakeResponse(200, "type=E891AB")),
+            ]
+        )
+        await client.async_get_text("magicBox.cgi?action=getVendor")
+        await client.async_get_text("magicBox.cgi?action=getDeviceType")
+        assert session.count(TYPE) == 1
+        assert session.calls[-1]["headers"]["Authorization"].startswith("Basic ")
+
+    async def test_digest_success_never_sends_basic(self):
+        client, session = make_client(
+            [
+                (VENDOR, FakeResponse(401, "", CHALLENGE)),
+                (VENDOR, FakeResponse(200, "vendor=Dahua")),
+            ]
+        )
+        await client.async_get_text("magicBox.cgi?action=getVendor")
+        assert client._use_basic_auth is False
+        assert all(
+            not str(call["headers"].get("Authorization", "")).startswith("Basic ")
+            for call in session.calls
+        )
+
+    async def test_fallback_can_be_refused(self):
+        """Basic auth puts the password on the wire in a recoverable form."""
+        client, session = make_client(
+            [
+                (VENDOR, FakeResponse(401, "", CHALLENGE)),
+                (VENDOR, FakeResponse(401, "", CHALLENGE)),
+            ],
+            basic_auth_fallback=False,
+        )
+        with pytest.raises(DahuaAuthError):
+            await client.async_get_text("magicBox.cgi?action=getVendor")
+        assert session.count(VENDOR) == 2
+        assert all(
+            not str(call["headers"].get("Authorization", "")).startswith("Basic ")
+            for call in session.calls
+        )
 
 
 class TestTls:
@@ -366,12 +434,13 @@ class TestAudioProbeGuard:
                 (AUDIO, FakeResponse(401, "", stale)),
                 (AUDIO, FakeResponse(401, "", stale)),
                 (AUDIO, FakeResponse(401, "", stale)),
+                (AUDIO, FakeResponse(401, "", stale)),
             ]
         )
         client._brand = identify_brand(vendor="Amcrest")
         with pytest.raises(DahuaAuthError):
             await client.async_get_audio_input(1)
-        assert session.count(AUDIO) == 2
+        assert session.count(AUDIO) == 3
 
     async def test_hang_raises_a_dahua_timeout(self):
         """A device that accepts the connection and never sends headers."""
