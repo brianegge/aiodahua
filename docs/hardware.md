@@ -32,7 +32,7 @@ a brand profile to `hardware_verified`.
 | IPC-T5442TM-AS-6.0mm | dahua | 2.840.15OG00D.0.R | H.264, H.265, MJPG | 2 | yes | no | no | no | no | yes | yes | yes | no | yes |
 | IPC-Color4K-T-3.6mm | dahua | 3.000.0000000.20.R | H.264, H.265, MJPG | 2 | yes | no | no | no | no | yes | yes | yes | no | yes |
 | N841A8 | lorex | 3.216.00LR035.0 | H.264, H.265, MJPG | 2 | yes | yes | yes | no | no | yes | no | yes | no | skipped |
-| NV4108E-HS | amcrest | 4.001.0000005.1 | H.264, H.265, MJPG | 2 | yes | yes | yes | no | no | no | yes | yes | no | yes |
+| NV4108E-HS | dahua (amcrest hardware) | 4.001.0000005.1 | H.264, H.265, MJPG | 2 | yes | yes | yes | no | no | no | yes | yes | no | yes |
 | LTN6416 | dahua | 4.001.0000005.4.R | H.264, H.265, MJPG | 2 | yes | yes | yes | no | no | yes | yes | yes | no | yes |
 
 `skipped` means the library refused to send the request because the brand
@@ -46,10 +46,15 @@ field in `getSystemInfo` is usually more specific.
 
 ## What these devices taught the library
 
-**An Amcrest recorder can answer `getVendor=Dahua`.** The NV4108E-HS above
-does, and its version string `4.001.0000005.1` carries no OEM code, so the
-serial prefix `AMR` is the only signal that identifies it. Signals are weighted
-for exactly this reason -- see `SIGNAL_WEIGHTS` in `brands.py`.
+**The NV4108E-HS above is cross-flashed**: Amcrest hardware running generic
+Dahua firmware. It answers `getVendor=Dahua`, its version `4.001.0000005.1`
+carries no OEM code where stock Amcrest firmware would say `AC`, and it is
+configured against Dahua's own easy4ip P2P service, while the Lorex recorder
+beside it points at `p2p.lorexservices.com`. Its `AMR` serial and model name
+are the only Amcrest left. This is why `identify_brand` separates
+`firmware_brand` from `hardware_brand` -- it reports `brand=dahua` for this
+device, with `hardware_brand=amcrest` and `is_cross_flashed=True`. The table
+lists it under the brand whose firmware it runs.
 
 **That same recorder redirects port 80 to a self-signed HTTPS endpoint**, so
 plain HTTP fails at the TLS handshake rather than at the redirect. It needs

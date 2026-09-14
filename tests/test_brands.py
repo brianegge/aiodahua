@@ -100,25 +100,51 @@ class TestIdentifyOtherBrands:
         assert identify_brand(vendor="Lorex").profile.hardware_verified is True
 
 
-class TestWeighting:
-    """Signals disagree constantly on real hardware; weight decides."""
+class TestFirmwareVersusHardware:
+    """Signals disagree constantly on real hardware; the firmware decides."""
 
-    def test_serial_prefix_beats_a_generic_vendor_string(self):
-        """An Amcrest NV4108E-HS, read off the device.
+    def test_cross_flashed_device_reports_its_firmware(self):
+        """An Amcrest NV4108E-HS carrying generic Dahua firmware.
 
-        It answers getVendor="Dahua" -- not "AC" as its NV4116-HS sibling does
-        -- and its version carries no OEM code, so the serial is the only
-        signal that says anything about the brand. Equal-count voting used to
-        hand this to Dahua on a tie-break.
+        Read off the device: getVendor="Dahua" (not "AC", as its NV4116-HS
+        sibling answers), no OEM code in the version, Dahua's own easy4ip P2P
+        service configured -- on hardware whose serial says Amcrest. The
+        firmware is what answers requests, so that is what `brand` reports.
         """
         match = identify_brand(
             vendor="Dahua",
             version="4.001.0000005.1,build:2021-07-13",
             serial="AMR013C3556656F6E1",
         )
+        assert match.brand is Brand.DAHUA
+        assert match.firmware_brand is Brand.DAHUA
+        assert match.hardware_brand is Brand.AMCREST
+        assert match.is_cross_flashed is True
+        assert match.matched_on == ("vendor",)
+
+    def test_serial_only_device_falls_back_to_hardware(self):
+        """Firmware that gives nothing away leaves the serial to decide."""
+        match = identify_brand(serial="AMR013C3556656F6E1")
         assert match.brand is Brand.AMCREST
         assert match.matched_on == ("serial",)
-        assert match.is_confident is False
+        assert match.is_cross_flashed is False
+
+    def test_stock_device_is_not_cross_flashed(self):
+        """An IP5M-T1179E: hardware and firmware agree, as they should."""
+        match = identify_brand(
+            vendor="Amcrest",
+            version="2.800.00AC001.0.R,build:2020-12-30",
+            serial="AMC060E2586932DD02",
+        )
+        assert match.is_cross_flashed is False
+        assert match.firmware_brand is match.hardware_brand is Brand.AMCREST
+
+    def test_unknown_serial_prefix_is_not_a_conflict(self):
+        """An LTN6416 serial matches no profile; that is silence, not Dahua."""
+        match = identify_brand(vendor="Dahua", serial="4F029A7GAZ5CF25")
+        assert match.brand is Brand.DAHUA
+        assert match.hardware_brand is Brand.UNKNOWN
+        assert match.is_cross_flashed is False
 
     def test_lorex_recorder_answering_dahua(self):
         """An N841A8: vendor "Dahua", but OEM code LR and an ND serial."""
@@ -158,12 +184,14 @@ class TestWeighting:
         assert match.oem_code == "OG"
         assert match.matched_on == ("vendor",)
 
-    def test_two_weak_signals_beat_one_strong_one(self):
+    def test_firmware_outranks_hardware(self):
         """Firmware quirks follow the firmware, so vendor+OEM outrank a serial."""
         match = identify_brand(
             vendor="Dahua", version="4.000.00DH000.0", serial="AMC123"
         )
         assert match.brand is Brand.DAHUA
+        assert match.hardware_brand is Brand.AMCREST
+        assert match.is_cross_flashed is True
 
 
 class TestIdentifyUnknown:

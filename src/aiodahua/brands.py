@@ -6,21 +6,30 @@ but they identify themselves differently and their firmware builds diverge in
 which endpoints actually work. This module works out which brand you are
 talking to, and what that implies.
 
-Three independent signals are used. They are *weighted*, in descending order
-of reliability:
+The signals fall into two groups, and a device can genuinely belong to one
+brand in one group and another brand in the other -- firmware cross-flashing is
+common on this hardware.
 
-1. The serial number prefix, e.g. ``AMC``/``AMR`` for Amcrest, ``ND`` for
-   Lorex. The strongest signal: it is baked in at manufacture and no device
-   observed so far lies about it.
-2. The OEM code embedded in the firmware version string. Dahua versions look
+**Firmware**, which is what a profile actually predicts:
+
+1. The OEM code embedded in the firmware version string. Dahua versions look
    like ``4.000.00AC000.0`` or ``2.622.00AC000.0.R``; the two letters after
    ``00`` are the OEM code (``AC`` = Amcrest, ``DH`` = Dahua, ``LR`` = Lorex).
-   Absent on some builds -- an NV4108E-HS reports ``4.001.0000005.1``.
-3. ``magicBox.cgi?action=getVendor``. The weakest signal, and not consistent
-   even within one brand: Amcrest NVRs have been seen answering ``AC`` *and*
-   plain ``Dahua``, while Amcrest cameras answer ``Amcrest``. A rebranded
-   device answering ``Dahua`` or ``General`` is saying almost nothing, so it
-   must never outrank a serial prefix.
+   Absent on generic builds -- an NV4108E-HS reports ``4.001.0000005.1``.
+2. ``magicBox.cgi?action=getVendor``. Weaker, and not consistent even within
+   one brand: Amcrest recorders have been seen answering ``AC`` *and* plain
+   ``Dahua``, while Amcrest cameras answer ``Amcrest``.
+
+**Hardware**: the serial number prefix, e.g. ``AMC``/``AMR`` for Amcrest,
+``ND`` for Lorex. Baked in at manufacture, and unchanged by a firmware flash.
+
+:attr:`BrandMatch.brand` reports the *firmware* brand, because that is what
+determines which endpoints exist and how they misbehave. It falls back to the
+hardware brand when a device offers no firmware signal at all. When the two
+disagree, :attr:`BrandMatch.is_cross_flashed` says so and both remain
+available -- an Amcrest NV4108E-HS running generic Dahua firmware (no OEM code,
+``getVendor=Dahua``, Dahua's own easy4ip P2P service) reports
+``brand=dahua``, ``hardware_brand=amcrest``.
 
 Identification never fails. An unrecognised device returns
 :attr:`Brand.UNKNOWN` with the raw strings preserved, and every client feature
@@ -44,11 +53,12 @@ __all__ = [
     "identify_brand",
 ]
 
-# How much each signal counts for. A serial prefix outweighs any single other
-# signal because it is the only one a rebranded device has never been seen to
-# get wrong; getVendor is weakest because "Dahua"/"General" are the factory
-# defaults that many rebrands never change.
-SIGNAL_WEIGHTS = {"serial": 3, "oem_code": 2, "vendor": 1}
+# How much each firmware signal counts for. The OEM code is part of the build
+# itself, while getVendor is a string the firmware reports and often leaves at
+# the factory default -- "Dahua" or "General" -- whatever brand is on the box.
+# "serial" is not here: it identifies the hardware, not the firmware, and is
+# weighed separately.
+SIGNAL_WEIGHTS = {"oem_code": 2, "vendor": 1}
 
 # e.g. "4.000.00AC000.0,build:2020-05-21" -> "AC"
 #      "2.622.00AC000.0.R,build:2020-10-22" -> "AC"
@@ -160,11 +170,16 @@ class BrandMatch:
     """The outcome of brand identification.
 
     Attributes:
-        brand: The identified brand, or :attr:`Brand.UNKNOWN`.
+        brand: The brand whose quirks to expect: the firmware brand, or the
+            hardware brand where the firmware gave nothing away. May be
+            :attr:`Brand.UNKNOWN`.
         profile: The matching :class:`BrandProfile`.
-        matched_on: Which signals agreed, e.g. ``("vendor", "oem_code")``.
+        matched_on: Which signals backed :attr:`brand`, e.g.
+            ``("vendor", "oem_code")``.
         oem_code: The OEM code parsed from the firmware version, if any.
         raw_vendor: The unmodified ``getVendor`` response, if any.
+        firmware_brand: From the OEM code and vendor string.
+        hardware_brand: From the serial number prefix. Survives a reflash.
     """
 
     brand: Brand
@@ -172,12 +187,28 @@ class BrandMatch:
     matched_on: tuple[str, ...] = ()
     oem_code: str | None = None
     raw_vendor: str | None = None
+    firmware_brand: Brand = Brand.UNKNOWN
+    hardware_brand: Brand = Brand.UNKNOWN
     _extra: dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def is_confident(self) -> bool:
         """True when more than one independent signal agreed."""
         return len(self.matched_on) > 1
+
+    @property
+    def is_cross_flashed(self) -> bool:
+        """True when the firmware belongs to a different brand than the metal.
+
+        Amcrest hardware running Dahua firmware, for example. Both brands are
+        real; ``brand`` reports the firmware one because that is what decides
+        how the device behaves.
+        """
+        return (
+            self.firmware_brand is not Brand.UNKNOWN
+            and self.hardware_brand is not Brand.UNKNOWN
+            and self.firmware_brand is not self.hardware_brand
+        )
 
     def __str__(self) -> str:
         return self.profile.display_name
@@ -220,45 +251,64 @@ def identify_brand(
     vendor_norm = (vendor or "").strip().lower()
     serial_norm = (serial or "").strip().upper()
 
-    votes: dict[Brand, set[str]] = {}
-
-    def vote(brand: Brand, signal: str) -> None:
-        votes.setdefault(brand, set()).add(signal)
-
-    def score(brand: Brand) -> int:
-        return sum(SIGNAL_WEIGHTS[signal] for signal in votes[brand])
+    firmware_votes: dict[Brand, set[str]] = {}
+    hardware_votes: dict[Brand, set[str]] = {}
 
     for brand, profile in PROFILES.items():
         if brand is Brand.UNKNOWN:
             continue
         if vendor_norm and vendor_norm in profile.vendor_aliases:
-            vote(brand, "vendor")
+            firmware_votes.setdefault(brand, set()).add("vendor")
         if oem_code and oem_code in profile.oem_codes:
-            vote(brand, "oem_code")
+            firmware_votes.setdefault(brand, set()).add("oem_code")
         if serial_norm and any(
             serial_norm.startswith(p) for p in profile.serial_prefixes
         ):
-            vote(brand, "serial")
+            hardware_votes.setdefault(brand, set()).add("serial")
 
-    if not votes:
+    # Highest total weight wins, then the most agreeing signals, then a stable
+    # brand order so the result never depends on dict iteration order.
+    order = list(PROFILES)
+
+    def best(votes: dict[Brand, set[str]]) -> Brand:
+        if not votes:
+            return Brand.UNKNOWN
+        return max(
+            votes,
+            key=lambda b: (
+                sum(SIGNAL_WEIGHTS.get(signal, 0) for signal in votes[b]),
+                len(votes[b]),
+                -order.index(b),
+            ),
+        )
+
+    firmware_brand = best(firmware_votes)
+    hardware_brand = best(hardware_votes)
+    # The firmware decides, because the firmware is what answers the requests.
+    # Hardware only speaks when the firmware says nothing at all.
+    brand = firmware_brand if firmware_brand is not Brand.UNKNOWN else hardware_brand
+
+    if brand is Brand.UNKNOWN:
         return BrandMatch(
             brand=Brand.UNKNOWN,
             profile=PROFILES[Brand.UNKNOWN],
             oem_code=oem_code,
             raw_vendor=vendor,
+            firmware_brand=firmware_brand,
+            hardware_brand=hardware_brand,
         )
 
-    # Highest total weight wins, so a serial prefix beats a lone generic
-    # vendor string: an Amcrest NV4108E-HS answers getVendor="Dahua" and has no
-    # OEM code in "4.001.0000005.1", leaving serial "AMR..." as the only signal
-    # that is actually about the brand. Ties are broken by a stable brand order
-    # so the result never depends on dict iteration order.
-    order = list(PROFILES)
-    best = max(votes, key=lambda b: (score(b), len(votes[b]), -order.index(b)))
+    # Everything that backs the brand being reported, from either group: a
+    # device whose serial agrees with its firmware is more convincing than one
+    # where only the firmware speaks.
+    matched_on = firmware_votes.get(brand, set()) | hardware_votes.get(brand, set())
+
     return BrandMatch(
-        brand=best,
-        profile=PROFILES[best],
-        matched_on=tuple(sorted(votes[best])),
+        brand=brand,
+        profile=PROFILES[brand],
+        matched_on=tuple(sorted(matched_on)),
         oem_code=oem_code,
         raw_vendor=vendor,
+        firmware_brand=firmware_brand,
+        hardware_brand=hardware_brand,
     )
