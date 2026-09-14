@@ -24,9 +24,12 @@ from .config import build_config_query
 from .digest import DigestAuth
 from .exceptions import DahuaAuthError
 from .exceptions import DahuaConnectionError
+from .exceptions import DahuaError
 from .exceptions import DahuaNotSupportedError
 from .exceptions import DahuaResponseError
 from .exceptions import DahuaTimeoutError
+from .exceptions import DahuaUnsafeOperationError
+from .parsers import is_error_response
 from .parsers import is_not_supported_response
 from .parsers import parse_kv
 from .parsers import parse_log_entries
@@ -82,6 +85,11 @@ class DahuaClient:
     The client does not own its :class:`aiohttp.ClientSession` unless it
     created one, so it is safe to pass Home Assistant's shared session.
 
+    Devices that answer on HTTPS present a self-signed certificate, and some
+    redirect port 80 to it -- an Amcrest NV4108E-HS answers ``302`` to
+    ``https://<host>:443/``. Verification then fails on a request that was
+    addressed to plain HTTP, so pass ``verify_ssl=False`` for those.
+
     Example:
         >>> async with DahuaClient("192.168.1.10", "admin", "secret") as dev:
         ...     brand = await dev.async_identify()
@@ -99,6 +107,7 @@ class DahuaClient:
         session: aiohttp.ClientSession | None = None,
         timeout: int = DEFAULT_TIMEOUT,
         tls: bool = False,
+        verify_ssl: bool = True,
     ) -> None:
         # Trailing slashes would produce URLs like http://host/:80
         host = host.rstrip("/")
@@ -113,6 +122,14 @@ class DahuaClient:
         self._session = session
         self._owns_session = session is None
         self._brand: BrandMatch | None = None
+        # aiohttp reads ssl=None as "use the default context"; False disables
+        # verification. Dahua devices ship a self-signed certificate, so an
+        # HTTPS device is unreachable without this.
+        self._ssl = None if verify_ssl else False
+        # Digest nonce state, carried across requests. Without it every call
+        # costs an extra round trip and an extra TCP connection -- and shows up
+        # as its own Login/Logout pair in the device's finite audit log.
+        self._digest_state: dict[str, Any] = {}
         # Alias so carried-over methods read naturally.
         self._address = host
 
@@ -136,6 +153,23 @@ class DahuaClient:
         if self._owns_session and self._session is not None:
             await self._session.close()
             self._session = None
+
+    def _digest(self) -> DigestAuth:
+        """A digest helper primed with the nonce state of earlier requests."""
+        return DigestAuth(
+            self._username,
+            self._password,
+            self._get_session(),
+            self._digest_state,
+        )
+
+    def _remember_digest(self, auth: DigestAuth) -> None:
+        """Carry the nonce forward so the next request skips the challenge."""
+        self._digest_state = {
+            "last_nonce": auth.last_nonce,
+            "nonce_count": auth.nonce_count,
+            "challenge": auth.challenge,
+        }
 
     def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None:
@@ -182,13 +216,16 @@ class DahuaClient:
         response = None
         try:
             async with asyncio.timeout(self._timeout):
-                auth = DigestAuth(self._username, self._password, self._get_session())
-                response = await auth.request("GET", url)
+                auth = self._digest()
+                response = await auth.request("GET", url, ssl=self._ssl)
+                self._remember_digest(auth)
                 text = await response.text()
 
                 if response.status == 401:
                     raise DahuaAuthError(f"Authentication failed for {self._host}")
-                if response.status == 400 and is_not_supported_response(text):
+                # 400 "Bad Request!" on older firmware, 501 "Not Implemented!"
+                # on newer builds. Same meaning to a caller.
+                if response.status in (400, 501) and is_not_supported_response(text):
                     raise DahuaNotSupportedError(
                         f"{self._host} firmware does not implement {endpoint}"
                     )
@@ -204,6 +241,16 @@ class DahuaClient:
                     raise DahuaNotSupportedError(
                         f"{self._host} firmware does not implement {endpoint}"
                     )
+                # ...and some answers 200 with a different error entirely,
+                # which would otherwise parse into a dict of nonsense.
+                if is_error_response(text):
+                    raise DahuaResponseError(
+                        f"{self._host} returned an error for {endpoint}: "
+                        f"{text.strip().splitlines()[0]}",
+                        status=response.status,
+                        endpoint=endpoint,
+                        body=text[:200],
+                    )
                 return text
         except (DahuaAuthError, DahuaNotSupportedError, DahuaResponseError):
             raise
@@ -216,6 +263,11 @@ class DahuaClient:
                 f"HTTP {err.status} on {endpoint}",
                 status=err.status,
                 endpoint=endpoint,
+            ) from err
+        except aiohttp.ClientConnectorCertificateError as err:
+            raise DahuaConnectionError(
+                f"Cannot reach {self._host}: {err}. Dahua devices ship a "
+                f"self-signed certificate -- pass verify_ssl=False to accept it."
             ) from err
         except (aiohttp.ClientError, socket.gaierror) as err:
             raise DahuaConnectionError(f"Cannot reach {self._host}: {err}") from err
@@ -234,10 +286,27 @@ class DahuaClient:
         response = None
         try:
             async with asyncio.timeout(self._timeout):
-                auth = DigestAuth(self._username, self._password, self._get_session())
-                response = await auth.request("GET", url)
+                auth = self._digest()
+                response = await auth.request("GET", url, ssl=self._ssl)
+                self._remember_digest(auth)
                 if response.status == 401:
                     raise DahuaAuthError(f"Authentication failed for {self._host}")
+                if response.status in (400, 501):
+                    # Error bodies are short text, so reading one to classify
+                    # it costs nothing -- and a caller asking for a snapshot
+                    # from a channel the device does not have deserves the same
+                    # DahuaNotSupportedError the text transport would raise.
+                    body = await response.text()
+                    if is_not_supported_response(body):
+                        raise DahuaNotSupportedError(
+                            f"{self._host} firmware does not implement {endpoint}"
+                        )
+                    raise DahuaResponseError(
+                        f"HTTP {response.status} on {endpoint}",
+                        status=response.status,
+                        endpoint=endpoint,
+                        body=body[:200],
+                    )
                 if response.status >= 400:
                     raise DahuaResponseError(
                         f"HTTP {response.status} on {endpoint}",
@@ -256,6 +325,11 @@ class DahuaClient:
                 f"HTTP {err.status} on {endpoint}",
                 status=err.status,
                 endpoint=endpoint,
+            ) from err
+        except aiohttp.ClientConnectorCertificateError as err:
+            raise DahuaConnectionError(
+                f"Cannot reach {self._host}: {err}. Dahua devices ship a "
+                f"self-signed certificate -- pass verify_ssl=False to accept it."
             ) from err
         except (aiohttp.ClientError, socket.gaierror) as err:
             raise DahuaConnectionError(f"Cannot reach {self._host}: {err}") from err
@@ -1405,20 +1479,73 @@ class DahuaClient:
         ).format(ch=channel, val=value)
         await self.get(url, True)
 
-    async def async_get_audio_input(self, channel: int) -> dict[str, Any]:
-        """Probe audio.cgi with a read-only GET to check if the endpoint exists.
+    async def async_get_audio_input(self, channel: int, force: bool = False) -> bool:
+        """Probe ``audio.cgi`` to find out whether this device has audio input.
 
-        Returns the parsed response on success.  Lets ``ClientError`` propagate
-        on failure so the caller can treat it as "not supported".
+        The response is an open audio stream, so only the headers are read and
+        the connection is closed straight away -- the body is never consumed.
+
+        Args:
+            channel: 1-based, like :meth:`async_find_recordings` and unlike the
+                0-based ``Encode[n]`` config sections. Channel ``0`` is not
+                merely rejected: the device answers ``401`` with
+                ``stale=TRUE``, which invites the client to retry with the new
+                nonce, and does so again for every retry. Confirmed on an
+                IPC-B54IR-ASE-S3, an IP5M-T1179E and an LTN6416.
+            force: Run the probe even on a device whose brand profile says it
+                reboots. See below.
+
+        Returns:
+            True if the device served the stream, False if it answered but
+            refused (no audio hardware).
+
+        Raises:
+            ValueError: ``channel`` is below 1.
+            DahuaUnsafeOperationError: The identified brand is known to reboot
+                on this request, and ``force`` is False. A Lorex E891AB on
+                2.622 firmware drops off the network for ~105 seconds and logs
+                its own crash; a recorder watching that camera sees an outage.
+                Identification runs first if it has not already, which costs
+                three cheap requests.
+            DahuaTimeoutError: The device accepted the connection but never
+                sent headers.
+            DahuaConnectionError: The device could not be reached.
         """
+        if channel < 1:
+            raise ValueError(
+                "audio.cgi channels are 1-based; channel 0 is answered with an "
+                "endless stale=TRUE challenge"
+            )
+        if not force:
+            brand = self._brand or await self.async_identify()
+            if brand.profile.audio_cgi_reboots:
+                raise DahuaUnsafeOperationError(
+                    f"{self._host} is a {brand.profile.display_name} device, "
+                    f"whose firmware reboots when audio.cgi is requested. Not "
+                    f"sending it. Pass force=True to override."
+                )
         url = (
             "{0}/cgi-bin/audio.cgi?action=getAudio&httptype=singlepart&channel={1}"
         ).format(self._base, channel)
-        async with asyncio.timeout(TIMEOUT_SECONDS):
-            auth = DigestAuth(self._username, self._password, self._get_session())
-            response = await auth.request("GET", url)
-            response.raise_for_status()
-            response.close()
+        response = None
+        try:
+            async with asyncio.timeout(self._timeout):
+                auth = self._digest()
+                response = await auth.request("GET", url, ssl=self._ssl)
+                self._remember_digest(auth)
+                if response.status == 401:
+                    raise DahuaAuthError(f"Authentication failed for {self._host}")
+                return response.status < 400
+        except DahuaError:
+            raise
+        except TimeoutError as err:
+            raise DahuaTimeoutError(f"Timed out talking to {self._host}") from err
+        except (aiohttp.ClientError, socket.gaierror) as err:
+            raise DahuaConnectionError(f"Cannot reach {self._host}: {err}") from err
+        finally:
+            # Never read the body: it is a live audio stream that never ends.
+            if response is not None:
+                response.close()
 
     async def async_post_audio(
         self,
@@ -1451,7 +1578,7 @@ class DahuaClient:
         # Prime digest auth with a lightweight GET so the POST is
         # authenticated on first attempt (camera drops un-authed POSTs).
         prime_auth = DigestAuth(self._username, self._password, self._get_session())
-        async with asyncio.timeout(TIMEOUT_SECONDS):
+        async with asyncio.timeout(self._timeout):
             prime_resp = await prime_auth.request(
                 "GET", self._base + "/cgi-bin/magicBox.cgi?action=getMachineName"
             )
@@ -1552,7 +1679,7 @@ class DahuaClient:
         writer: asyncio.StreamWriter
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(cam_host, int(rtsp_port)),
-            timeout=TIMEOUT_SECONDS,
+            timeout=self._timeout,
         )
 
         cseq = 0

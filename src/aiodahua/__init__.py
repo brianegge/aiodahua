@@ -17,6 +17,7 @@ handles both.
 from __future__ import annotations
 
 from .brands import PROFILES
+from .brands import SIGNAL_WEIGHTS
 from .brands import Brand
 from .brands import BrandMatch
 from .brands import BrandProfile
@@ -34,8 +35,11 @@ from .exceptions import DahuaError
 from .exceptions import DahuaNotSupportedError
 from .exceptions import DahuaResponseError
 from .exceptions import DahuaTimeoutError
+from .exceptions import DahuaUnsafeOperationError
 from .exceptions import DahuaValueError
 from .parsers import format_bytes
+from .parsers import is_error_response
+from .parsers import is_not_supported_response
 from .parsers import parse_kv
 from .parsers import parse_log_entries
 from .parsers import parse_media_files
@@ -48,6 +52,7 @@ __all__ = [
     "DEFAULT_RTSP_PORT",
     "DEFAULT_TIMEOUT",
     "PROFILES",
+    "SIGNAL_WEIGHTS",
     "Brand",
     "BrandMatch",
     "BrandProfile",
@@ -58,6 +63,7 @@ __all__ = [
     "DahuaNotSupportedError",
     "DahuaResponseError",
     "DahuaTimeoutError",
+    "DahuaUnsafeOperationError",
     "DahuaValueError",
     "__version__",
     "build_config_query",
@@ -65,6 +71,8 @@ __all__ = [
     "extract_oem_code",
     "format_bytes",
     "identify_brand",
+    "is_error_response",
+    "is_not_supported_response",
     "parse_kv",
     "parse_log_entries",
     "parse_media_files",
