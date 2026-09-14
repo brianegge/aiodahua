@@ -45,7 +45,7 @@ from .parsers import parse_log_entries
 from .parsers import parse_media_files
 from .parsers import parse_storage_info
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "DEFAULT_PORT",
