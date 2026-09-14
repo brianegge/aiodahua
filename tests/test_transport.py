@@ -312,6 +312,22 @@ class TestAudioProbeGuard:
             await client.async_post_audio(b"audio", 1)
         assert session.calls == []
 
+    async def test_post_audio_force_overrides_the_guard(self):
+        """force=True is the documented escape hatch for someone who owns a
+        Lorex and accepts the reboot. It is covered on the probe above but not
+        here, and an unhonoured flag on the speaker path would leave the guard
+        unconditional with nothing to catch it."""
+        client, session = make_client(
+            [
+                ("getMachineName", FakeResponse(200, "name=cam")),
+                (AUDIO, FakeResponse(200, "")),
+            ]
+        )
+        client._brand = identify_brand(vendor="LOREX")
+        with contextlib.suppress(Exception):
+            await client.async_post_audio(b"audio", 1, force=True)
+        assert session.count(AUDIO) >= 1
+
     async def test_post_audio_allowed_on_other_brands(self):
         # It primes digest on a cheap GET before POSTing the stream.
         client, session = make_client(
