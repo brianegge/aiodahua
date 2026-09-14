@@ -3,6 +3,10 @@ name: Release
 # Publishes to PyPI via trusted publishing (OIDC), so no API token is stored
 # anywhere. See RELEASING.md for the one-time PyPI configuration this needs.
 #
+# The filename matters: PyPI matches it against the OIDC claim, so the trusted
+# publisher must be registered with Workflow name `workflow.yml`. Renaming this
+# file breaks publishing until the publisher is updated to match.
+#
 # Trigger by publishing a GitHub Release whose tag is v<version>, matching the
 # version in pyproject.toml. The tag and the packaged version are compared
 # before anything is uploaded, because a PyPI version can never be reused.

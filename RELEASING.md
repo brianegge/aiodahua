@@ -17,7 +17,7 @@ This cannot be done from CI — someone has to do it signed in to PyPI.
    | PyPI Project Name | `aiodahua` |
    | Owner | `brianegge` |
    | Repository name | `aiodahua` |
-   | Workflow name | `release.yml` |
+   | Workflow name | `workflow.yml` |
    | Environment name | `pypi` |
 
 2. In the GitHub repo, create an environment named `pypi`
@@ -29,6 +29,11 @@ This cannot be done from CI — someone has to do it signed in to PyPI.
    environment.
 
 ## Cutting a release
+
+> The **Workflow name** must match the filename in `.github/workflows/`
+> exactly. PyPI checks it against the OIDC claim GitHub mints, so a mismatch
+> fails at the upload step with an unhelpful error after everything else has
+> already passed. This repo uses `workflow.yml`.
 
 1. Bump `version` in `pyproject.toml` **and** `__version__` in
    `src/aiodahua/__init__.py`. They are asserted equal by the test suite.
