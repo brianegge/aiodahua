@@ -29,6 +29,13 @@ from .client import DEFAULT_TIMEOUT
 from .client import DahuaClient
 from .config import build_config_query
 from .config import encode_config_value
+from .discovery import DISCOVERY_GROUP
+from .discovery import DISCOVERY_PORT
+from .discovery import DiscoveredDevice
+from .discovery import async_discover
+from .discovery import async_set_network_config
+from .discovery import decode_dhip
+from .discovery import encode_dhip
 from .exceptions import DahuaAuthError
 from .exceptions import DahuaConnectionError
 from .exceptions import DahuaError
@@ -46,12 +53,14 @@ from .parsers import parse_media_files
 from .parsers import parse_storage_info
 from .parsers import strip_dhav_preamble
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 __all__ = [
     "DEFAULT_PORT",
     "DEFAULT_RTSP_PORT",
     "DEFAULT_TIMEOUT",
+    "DISCOVERY_GROUP",
+    "DISCOVERY_PORT",
     "PROFILES",
     "SIGNAL_WEIGHTS",
     "Brand",
@@ -66,9 +75,14 @@ __all__ = [
     "DahuaTimeoutError",
     "DahuaUnsafeOperationError",
     "DahuaValueError",
+    "DiscoveredDevice",
     "__version__",
+    "async_discover",
+    "async_set_network_config",
     "build_config_query",
+    "decode_dhip",
     "encode_config_value",
+    "encode_dhip",
     "extract_oem_code",
     "format_bytes",
     "identify_brand",
