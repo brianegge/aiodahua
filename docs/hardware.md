@@ -104,8 +104,12 @@ and a range that crosses from one hourly file into the next with a
 truncated one; both come through as `DahuaConnectionError` from
 :meth:`async_download_clip`. Start a second earlier, and split at the hour.
 
-**The NV4108E-HS did the empty-body thing for whole daytime ranges** on
-the same afternoon, while answering a 03:42 range at once, and after a few
-of those aborted downloads answered every `loadfile.cgi` with `Error\r\nBad
-Request!` while snapshots and config reads carried on. Not yet understood,
-and not reproduced in a way that says whose fault it is.
+**The NV4108E-HS seeks worse, and can be wedged.** After a reboot it
+handed back 16:26:27 for a request of 16:20:57 -- five and a half minutes
+off -- and 15:54:44 for 15:55:10; the shift-and-ask-again loop lands in
+two or three rounds. Before the reboot it had spent an afternoon answering
+daytime ranges with empty bodies while a 03:42 range came at once, and
+after a few of those aborted downloads answered every `loadfile.cgi` with
+`Error\r\nBad Request!` while snapshots and config reads carried on.
+`magicBox.cgi?action=reboot` cleared it (about 40 s off the network); what
+got it there is not understood.
