@@ -87,3 +87,25 @@ IP5M-T1179E and the LTN6416.
 a missing endpoint. Probing it with a window in the year 2000 makes a recorder
 that records perfectly well look like it has no such endpoint, which is why the
 interview script asks the device for its own clock first.
+
+**`loadfile.cgi` on the LTN6416 does not hand back the instant it is asked
+for.** The main stream is stored in hourly files, and within one the frame
+returned for a time drifts from it as the hour goes on: 5 s early at
+16:14, 36 s early from 16:22 to 16:31 after a busy stretch of video, 4 s
+early by 16:50, then 11 s *late* in the next hour's file -- as though it
+seeks by byte offset at a nominal bitrate. Both channels checked, by
+different amounts at the same instant. The camera's own clock in the DHAV
+frame headers (`ffprobe -f dhav`, `pts_time` is local wall time counted as
+UTC) is right, so read it and ask again shifted by the miss; the frames
+are also stamped in their OSD if that is on. The same recorder answers a
+range whose start is an exact multiple of five minutes (`16:25:00`, not
+`16:24:59`) with a correct `Content-Length` and an empty body, every time,
+and a range that crosses from one hourly file into the next with a
+truncated one; both come through as `DahuaConnectionError` from
+:meth:`async_download_clip`. Start a second earlier, and split at the hour.
+
+**The NV4108E-HS did the empty-body thing for whole daytime ranges** on
+the same afternoon, while answering a 03:42 range at once, and after a few
+of those aborted downloads answered every `loadfile.cgi` with `Error\r\nBad
+Request!` while snapshots and config reads carried on. Not yet understood,
+and not reproduced in a way that says whose fault it is.
