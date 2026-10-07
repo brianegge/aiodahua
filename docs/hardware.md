@@ -113,3 +113,13 @@ after a few of those aborted downloads answered every `loadfile.cgi` with
 `Error\r\nBad Request!` while snapshots and config reads carried on.
 `magicBox.cgi?action=reboot` cleared it (about 40 s off the network); what
 got it there is not understood.
+
+**`VideoInExposure` and `VideoInOptions` are one store on the IP5M-T1179E.**
+Writing `VideoInExposure[0][n].Value2` changes `VideoInOptions[0].ExposureValue2`
+(and its `NightOptions`/`NormalOptions` copies) on the next read, and the
+reverse. `async_set_shutter_range` writes `VideoInExposure` only. In mode `0`
+(auto) the camera still reports a shutter range of 33.33/33.33 ms but does
+not honour it; mode `4` makes it hold the range, choosing exposure and gain
+automatically inside it. Those are the only two modes tried. Capping this
+camera at 1/60 s in a dim indoor scene at night moved mean brightness from
+83.5 to 82.2 with no change in noise.

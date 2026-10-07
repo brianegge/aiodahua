@@ -44,6 +44,12 @@ from .exceptions import DahuaResponseError
 from .exceptions import DahuaTimeoutError
 from .exceptions import DahuaUnsafeOperationError
 from .exceptions import DahuaValueError
+from .exposure import EXPOSURE_AUTO
+from .exposure import EXPOSURE_MODES
+from .exposure import EXPOSURE_PROFILES
+from .exposure import EXPOSURE_SHUTTER_RANGE
+from .exposure import parse_exposure
+from .exposure import parse_shutter
 from .parsers import format_bytes
 from .parsers import is_error_response
 from .parsers import is_not_supported_response
@@ -61,6 +67,10 @@ __all__ = [
     "DEFAULT_TIMEOUT",
     "DISCOVERY_GROUP",
     "DISCOVERY_PORT",
+    "EXPOSURE_AUTO",
+    "EXPOSURE_MODES",
+    "EXPOSURE_PROFILES",
+    "EXPOSURE_SHUTTER_RANGE",
     "PROFILES",
     "SIGNAL_WEIGHTS",
     "Brand",
@@ -88,9 +98,11 @@ __all__ = [
     "identify_brand",
     "is_error_response",
     "is_not_supported_response",
+    "parse_exposure",
     "parse_kv",
     "parse_log_entries",
     "parse_media_files",
+    "parse_shutter",
     "parse_storage_info",
     "strip_dhav_preamble",
 ]

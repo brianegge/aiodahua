@@ -30,6 +30,10 @@ from .exceptions import DahuaResponseError
 from .exceptions import DahuaTimeoutError
 from .exceptions import DahuaUnsafeOperationError
 from .exceptions import DahuaValueError
+from .exposure import DEFAULT_FASTEST_MS
+from .exposure import auto_exposure_config
+from .exposure import parse_exposure
+from .exposure import shutter_range_config
 from .parsers import is_error_response
 from .parsers import is_not_supported_response
 from .parsers import parse_kv
@@ -471,6 +475,45 @@ class DahuaClient:
         query = build_config_query(params)
         text = await self.async_get_text(f"configManager.cgi?action=setConfig&{query}")
         return "ok" in text.strip().lower()
+
+    async def async_get_exposure(self, channel: int = 0) -> list[dict]:
+        """Exposure mode, shutter range and gain range, per day/night profile.
+
+        See :func:`aiodahua.exposure.parse_exposure`.
+
+        Raises:
+            DahuaNotSupportedError: Firmware without ``VideoInExposure``.
+        """
+        return parse_exposure(
+            await self.async_get(
+                "configManager.cgi?action=getConfig&name=VideoInExposure"
+            ),
+            channel,
+        )
+
+    async def async_set_shutter_range(
+        self,
+        slowest: str | float,
+        fastest: str | float = DEFAULT_FASTEST_MS,
+        channel: int = 0,
+        profiles=None,
+    ) -> bool:
+        """Cap the shutter at ``slowest`` (``"1/60"`` or ms) to cut motion blur.
+
+        Exposure and gain stay automatic inside the range. The cost of a
+        faster shutter is gain, so expect a noisier picture in dim light. See
+        :mod:`aiodahua.exposure`.
+
+        Raises:
+            DahuaValueError: Bad speeds or profile. Nothing is sent.
+        """
+        return await self.async_set_config(
+            shutter_range_config(slowest, fastest, channel, profiles)
+        )
+
+    async def async_set_exposure_auto(self, channel: int = 0, profiles=None) -> bool:
+        """Undo :meth:`async_set_shutter_range`: let the camera choose freely."""
+        return await self.async_set_config(auto_exposure_config(channel, profiles))
 
     async def async_set_machine_name(self, name: str) -> bool:
         return await self.async_set_config({"General.MachineName": name})
