@@ -59,7 +59,7 @@ from .parsers import parse_media_files
 from .parsers import parse_storage_info
 from .parsers import strip_dhav_preamble
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "DEFAULT_PORT",
