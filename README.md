@@ -218,9 +218,11 @@ integration — 89 methods in total — so the integration can adopt this librar
 without a behavioural diff. That includes the parts that were the hardest to
 get right:
 
-- **Speaker audio out** — `async_post_audio()` (multipart MIME with per-frame
-  ADTS delivery, digest priming, explicit `Content-Length` because many cameras
-  reject chunked encoding) and `async_post_audio_backchannel()` (RTSP ONVIF
+- **Speaker audio out** — `async_post_audio()` (singlepart raw body by
+  default, or multipart MIME with per-frame ADTS delivery for AAC; pass
+  `httptype="singlepart"` for AAC on firmware that never answers multipart.
+  Digest priming, explicit `Content-Length` because many cameras reject chunked
+  encoding) and `async_post_audio_backchannel()` (RTSP ONVIF
   backchannel over TCP-interleaved RTP, for firmware that resets `audio.cgi` —
   notably Lorex).
 - **Event streaming** — `stream_events()` long-poll.
