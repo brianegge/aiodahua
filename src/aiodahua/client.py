@@ -1716,26 +1716,62 @@ class DahuaClient:
         encoding: str = "G.711A",
         duration: float = 0,
         force: bool = False,
+        httptype: str | None = None,
     ) -> None:
-        """POST audio to the camera speaker via multipart MIME streaming.
+        """POST audio to the camera speaker through ``audio.cgi``.
 
-        Uses ``httptype=multipart`` with each ADTS frame sent as a separate
-        MIME part.  This gives the camera explicit frame boundaries so its
-        decoder always receives complete, decodable units.  Parts are paced
-        at the AAC frame rate (128 ms for 8 kHz) to keep the playback buffer
-        fed without overrun.
+        Two wire formats exist, and firmware differs on which it accepts:
 
-        For non-AAC encodings, falls back to a single MIME part.
+        ``singlepart``
+            The raw audio is the request body, with ``Content-Type:
+            Audio/<encoding>``. An IPC-B54IR-ASE and an IPC-Color4K-T both
+            answer ``200 OK`` within a second, for G.711A and for AAC.
+
+        ``multipart``
+            ``multipart/x-mixed-replace``, one MIME part per ADTS frame for
+            AAC (or one part holding everything otherwise). The same two
+            cameras accept the connection and never answer -- for either
+            encoding -- so the call runs out its timeout. See issue #12.
 
         Args:
+            audio_data: Encoded audio, e.g. 8 kHz mono A-law, or AAC in ADTS
+                framing.
+            channel: 1-based.
+            encoding: ``G.711A``, ``G.711Mu``, ``AAC`` and so on; sent as
+                ``Audio/<encoding>``.
+            duration: Seconds of audio, used only to size the timeout. Worked
+                out from the payload when 0.
             force: Send even to a brand whose profile says audio.cgi reboots
                 it. See :class:`DahuaUnsafeOperationError`.
+            httptype: ``"singlepart"`` or ``"multipart"``. Defaults to
+                multipart for AAC, which is what this method has always sent
+                it as, and singlepart for everything else. Pass
+                ``"singlepart"`` for AAC on firmware that never answers the
+                multipart form.
 
         Raises:
+            ValueError: ``httptype`` is not one of the two formats.
             DahuaUnsafeOperationError: The brand reboots on audio.cgi and
                 ``force`` is False. Prefer
                 :meth:`async_post_audio_backchannel`.
+            DahuaAuthError: The device answered 401.
+            DahuaNotSupportedError: The device refused the request. A camera
+                without audio output always does; an IPC-B54IR-ASE also does
+                while it is still playing the previous clip, and accepts the
+                same request a few seconds later.
+            DahuaResponseError: Any other HTTP error.
+            DahuaConnectionError: The device dropped the connection.
+
+        A device that accepts the upload and simply never answers is not an
+        error: some firmware holds the request open while it plays.
         """
+        if httptype is None:
+            httptype = "multipart" if encoding == "AAC" else "singlepart"
+        if httptype not in ("singlepart", "multipart"):
+            raise ValueError(
+                f"httptype must be 'singlepart' or 'multipart', not {httptype!r}"
+            )
+
         if not force:
             # Same endpoint that reboots a Lorex E891AB on a plain GET. Only
             # the GET has been observed doing it -- no Lorex here has a speaker
@@ -1750,15 +1786,10 @@ class DahuaClient:
                     f"this brand prefers anyway, or pass force=True."
                 )
 
-        boundary = _MULTIPART_BOUNDARY
-        url = (
-            "{0}/cgi-bin/audio.cgi?action=postAudio&httptype=multipart&channel={1}"
-        ).format(self._base, channel)
-        headers = {
-            "Content-Type": (
-                "multipart/x-mixed-replace; boundary={0}".format(boundary)
-            ),
-        }
+        endpoint = "audio.cgi?action=postAudio&httptype={0}&channel={1}".format(
+            httptype, channel
+        )
+        url = "{0}/cgi-bin/{1}".format(self._base, endpoint)
         content_type = "Audio/{0}".format(encoding)
 
         # Prime digest auth with a lightweight GET so the POST is
@@ -1781,8 +1812,6 @@ class DahuaClient:
             },
         )
 
-        # Parse ADTS frames for frame-aligned delivery; fall back to
-        # a single part for non-AAC encodings.
         frames = _parse_adts_frames(audio_data) if encoding == "AAC" else []
 
         if duration <= 0:
@@ -1790,38 +1819,77 @@ class DahuaClient:
                 # AAC at 8 kHz: 1024 samples/frame = 128 ms/frame
                 duration = len(frames) * 1024.0 / 8000.0
             else:
+                # G.711 at 8 kHz is one byte per sample.
                 duration = len(audio_data) / 8000.0
-        if not frames:
-            frames = [audio_data]
 
-        # Build the complete multipart body up-front so the POST is sent
-        # with a Content-Length header.  Many Dahua cameras reject chunked
-        # transfer encoding (async-generator streaming) and immediately
-        # disconnect.
-        body_parts: list[bytes] = []
-        for frame in frames:
-            body_parts.append(
-                (
-                    "--{boundary}\r\n"
-                    "Content-Type: {ct}\r\n"
-                    "Content-Length: {length}\r\n"
-                    "\r\n"
+        # Either way the whole body is built up-front so the POST carries a
+        # Content-Length. Many Dahua cameras reject chunked transfer encoding
+        # (async-generator streaming) and immediately disconnect.
+        if httptype == "singlepart":
+            headers = {"Content-Type": content_type}
+            body = audio_data
+        else:
+            boundary = _MULTIPART_BOUNDARY
+            headers = {
+                "Content-Type": (
+                    "multipart/x-mixed-replace; boundary={0}".format(boundary)
+                ),
+            }
+            # One part per ADTS frame gives the decoder complete units.
+            body_parts: list[bytes] = []
+            for frame in frames or [audio_data]:
+                body_parts.append(
+                    (
+                        "--{boundary}\r\n"
+                        "Content-Type: {ct}\r\n"
+                        "Content-Length: {length}\r\n"
+                        "\r\n"
+                    )
+                    .format(boundary=boundary, ct=content_type, length=len(frame))
+                    .encode()
+                    + frame
+                    + b"\r\n"
                 )
-                .format(boundary=boundary, ct=content_type, length=len(frame))
-                .encode()
-                + frame
-                + b"\r\n"
-            )
-        body_parts.append("--{0}--\r\n".format(boundary).encode())
-        body = b"".join(body_parts)
+            body_parts.append("--{0}--\r\n".format(boundary).encode())
+            body = b"".join(body_parts)
 
         response = None
         try:
             async with asyncio.timeout(duration + 10):
                 response = await auth.request("POST", url, headers=headers, data=body)
+                if response.status == 401:
+                    raise DahuaAuthError(f"Authentication failed for {self._host}")
+                if response.status >= 400:
+                    # Error bodies are short; a success body may be a stream,
+                    # so only read on failure.
+                    text = await response.text()
+                    if response.status in (400, 501) and is_not_supported_response(
+                        text
+                    ):
+                        raise DahuaNotSupportedError(
+                            f"{self._host} refused audio on channel {channel} "
+                            f"(no audio output, or still playing an earlier clip)",
+                            endpoint=endpoint,
+                        )
+                    raise DahuaResponseError(
+                        f"HTTP {response.status} on {endpoint}",
+                        status=response.status,
+                        endpoint=endpoint,
+                        body=text[:200],
+                    )
+        except DahuaError:
+            raise
         except TimeoutError:
-            # Expected for cameras that treat this as a streaming endpoint
-            pass
+            # Some firmware holds the request open while it plays.
+            _LOGGER.debug(
+                "%s did not answer the %s audio POST before the timeout",
+                self._host,
+                httptype,
+            )
+        except aiohttp.ClientError as err:
+            raise DahuaConnectionError(
+                f"{self._host} dropped the audio POST: {err}"
+            ) from err
         finally:
             if response is not None:
                 response.close()

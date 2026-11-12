@@ -16,11 +16,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 
+import aiohttp
 import pytest
 
 from aiodahua import Brand
 from aiodahua import DahuaAuthError
 from aiodahua import DahuaClient
+from aiodahua import DahuaConnectionError
 from aiodahua import DahuaNotSupportedError
 from aiodahua import DahuaResponseError
 from aiodahua import DahuaTimeoutError
@@ -511,3 +513,116 @@ class TestMotionDetectFallback:
         )
         with pytest.raises(DahuaResponseError):
             await client.enable_motion_detection(0, True)
+
+
+def _adts_frame(payload: bytes = b"\x00" * 8) -> bytes:
+    """A minimal ADTS frame: 7-byte header, no CRC, 8 kHz mono AAC-LC."""
+    length = 7 + len(payload)
+    header = bytes(
+        [
+            0xFF,
+            0xF1,
+            0x6C,  # AAC-LC, sampling index 11 (8 kHz), channel config high bit 0
+            0x40 | ((length >> 11) & 0x03),  # channel config 1
+            (length >> 3) & 0xFF,
+            ((length & 0x07) << 5) | 0x1F,
+            0xFC,
+        ]
+    )
+    return header + payload
+
+
+class TestPostAudio:
+    """Wire format of audio.cgi postAudio (issue #12).
+
+    An IPC-B54IR-ASE and an IPC-Color4K-T both answer a singlepart POST with
+    ``200 OK`` in about a second, for G.711A and AAC alike, and never answer
+    the multipart form at all -- the request runs out its timeout.
+    """
+
+    @staticmethod
+    def _client(post_response):
+        client, session = make_client(
+            [
+                ("getMachineName", FakeResponse(200, "name=cam")),
+                (AUDIO, post_response),
+            ]
+        )
+        client._brand = identify_brand(vendor="Amcrest")
+        return client, session
+
+    @staticmethod
+    def _post(session):
+        (call,) = [c for c in session.calls if AUDIO in c["url"]]
+        assert call["method"] == "POST"
+        return call
+
+    async def test_g711_is_sent_singlepart_as_the_raw_body(self):
+        response = FakeResponse(200, "OK\r\n")
+        client, session = self._client(response)
+        await client.async_post_audio(b"\xd5" * 800, 1, encoding="G.711A")
+        call = self._post(session)
+        assert "httptype=singlepart" in call["url"]
+        assert "channel=1" in call["url"]
+        assert call["headers"]["Content-Type"] == "Audio/G.711A"
+        assert call["data"] == b"\xd5" * 800
+        assert response.closed is True
+
+    async def test_aac_defaults_to_multipart_frames(self):
+        frames = [_adts_frame(), _adts_frame(b"\x01" * 8)]
+        client, session = self._client(FakeResponse(200, ""))
+        await client.async_post_audio(b"".join(frames), 1, encoding="AAC")
+        call = self._post(session)
+        assert "httptype=multipart" in call["url"]
+        assert call["headers"]["Content-Type"].startswith("multipart/x-mixed-replace")
+        body = call["data"]
+        assert body.count(b"Content-Type: Audio/AAC\r\n") == 2
+        assert all(frame in body for frame in frames)
+        assert body.endswith(b"--\r\n")
+
+    async def test_aac_can_be_forced_singlepart(self):
+        audio = _adts_frame()
+        client, session = self._client(FakeResponse(200, "OK\r\n"))
+        await client.async_post_audio(audio, 1, encoding="AAC", httptype="singlepart")
+        call = self._post(session)
+        assert "httptype=singlepart" in call["url"]
+        assert call["headers"]["Content-Type"] == "Audio/AAC"
+        assert call["data"] == audio
+
+    async def test_unknown_httptype_is_rejected_before_sending(self):
+        client, session = self._client(FakeResponse(200, ""))
+        with pytest.raises(ValueError):
+            await client.async_post_audio(b"x", 1, httptype="chunked")
+        assert session.calls == []
+
+    async def test_refusal_is_raised_not_swallowed(self):
+        """An IPC-T5442TM-AS, which has no audio output, answers 400."""
+        client, _ = self._client(FakeResponse(400, "Error\r\nBad Request!\r\n"))
+        with pytest.raises(DahuaNotSupportedError):
+            await client.async_post_audio(b"\xd5" * 80, 1)
+
+    async def test_other_http_error_is_raised(self):
+        client, _ = self._client(FakeResponse(500, "boom"))
+        with pytest.raises(DahuaResponseError) as excinfo:
+            await client.async_post_audio(b"\xd5" * 80, 1)
+        assert excinfo.value.status == 500
+
+    async def test_a_device_that_never_answers_is_not_an_error(self):
+        """Firmware that holds the request open while it plays."""
+
+        async def times_out():
+            # What the duration-sized asyncio.timeout raises when it expires.
+            raise TimeoutError
+
+        client, _ = self._client(times_out)
+        await client.async_post_audio(b"\xd5" * 8, 1)
+
+    async def test_dropped_connection_is_a_connection_error(self):
+        """An IP5M-T1179E, which has no speaker, resets the connection."""
+
+        async def reset():
+            raise aiohttp.ClientOSError(54, "Connection reset by peer")
+
+        client, _ = self._client(reset)
+        with pytest.raises(DahuaConnectionError):
+            await client.async_post_audio(b"\xd5" * 80, 1)
